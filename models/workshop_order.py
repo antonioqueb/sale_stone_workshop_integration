@@ -3,6 +3,7 @@ import logging
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
+from odoo.tools.float_utils import float_compare
 
 _logger = logging.getLogger(__name__)
 
@@ -75,7 +76,9 @@ class WorkshopOrder(models.Model):
     def _compute_sale_workshop_reserved(self):
         for order in self:
             picking = order.sale_workshop_reservation_picking_id
-            order.sale_workshop_reserved = bool(picking and picking.state not in ('cancel', 'done'))
+            order.sale_workshop_reserved = bool(
+                picking and picking.state not in ('cancel', 'done')
+            )
 
     # ------------------------------------------------------------------
     # UI actions
@@ -171,14 +174,17 @@ class WorkshopOrder(models.Model):
         picking = self.sale_workshop_reservation_picking_id
         if not picking:
             return True
+
         if picking.state == 'done':
             if reset_lines:
                 raise UserError(_(
                     'No se puede liberar la reserva porque el picking %s ya fue validado.'
                 ) % picking.name)
             return True
+
         if picking.state != 'cancel':
             picking.action_cancel()
+
         if reset_lines:
             self.input_line_ids.filtered(
                 lambda l: l.consume_picking_id == picking and not l.is_consumed
@@ -188,17 +194,21 @@ class WorkshopOrder(models.Model):
             })
             self.write({'sale_workshop_reservation_picking_id': False})
             self._sale_workshop_sync_selection_states()
+
         return True
 
     def _sale_workshop_create_reservation_picking(self, input_lines):
         self.ensure_one()
         if not input_lines:
             return False
+
         self._ensure_default_locations()
+
         if not self.location_src_id or not self.location_workshop_id:
             raise UserError(_('Define ubicación origen y ubicación taller antes de reservar placas.'))
 
         picking_type = self._get_internal_picking_type()
+
         origin = '%s - Reserva taller' % (self.name or '')
         if self.sale_order_id:
             origin = '%s / %s - Reserva taller' % (self.sale_order_id.name, self.name)
@@ -218,6 +228,7 @@ class WorkshopOrder(models.Model):
 
         for line in input_lines:
             source_location = line.location_id or self.location_src_id
+
             move_vals = {
                 'picking_id': picking.id,
                 'product_id': line.product_id.id,
@@ -225,11 +236,14 @@ class WorkshopOrder(models.Model):
                 'location_dest_id': self.location_workshop_id.id,
                 'company_id': self.company_id.id,
             }
+
             if 'name' in StockMove._fields:
                 move_vals['name'] = '%s - Reserva %s' % (self.name, line.lot_id.name)
             elif 'description' in StockMove._fields:
                 move_vals['description'] = '%s - Reserva %s' % (self.name, line.lot_id.name)
+
             move_vals.update(self._sale_workshop_move_qty_vals(line.product_id, line.qty_in))
+
             move = StockMove.create(move_vals)
             moves |= move
             move_specs.append((move, line, source_location))
@@ -243,6 +257,7 @@ class WorkshopOrder(models.Model):
         for move, line, source_location in move_specs:
             # Evitar líneas autoasignadas por reglas externas y forzar el lote exacto.
             move.move_line_ids.unlink()
+
             ml_vals = {
                 'move_id': move.id,
                 'picking_id': picking.id,
@@ -252,25 +267,33 @@ class WorkshopOrder(models.Model):
                 'location_dest_id': self.location_workshop_id.id,
                 'company_id': self.company_id.id,
             }
+
             if 'product_uom_id' in StockMoveLine._fields:
                 ml_vals['product_uom_id'] = line.product_id.uom_id.id
+
             ml_vals.update(self._sale_workshop_move_line_qty_vals(line.qty_in))
             StockMoveLine.create(ml_vals)
 
         try:
             picking.action_assign()
         except Exception:
-            _logger.exception('[STONE WORKSHOP SALE] No se pudo asignar automáticamente la reserva %s', picking.name)
+            _logger.exception(
+                '[STONE WORKSHOP SALE] No se pudo asignar automáticamente la reserva %s',
+                picking.name,
+            )
 
         self.with_context(skip_sale_workshop_reservation=True).write({
             'sale_workshop_reservation_picking_id': picking.id,
         })
+
         input_lines.with_context(skip_sale_workshop_reservation=True).write({
             'state': 'reserved_for_workshop',
             'consume_picking_id': picking.id,
         })
+
         self._sale_workshop_sync_selection_states()
         self.message_post(body=_('Se reservaron placas base para venta en el picking %s.') % picking.name)
+
         return picking
 
     def _sale_workshop_refresh_input_reservation(self):
@@ -281,38 +304,270 @@ class WorkshopOrder(models.Model):
                 continue
             if order.state in ('sent_to_workshop', 'in_progress', 'partial_done', 'done', 'cancel'):
                 continue
+
             existing = order.sale_workshop_reservation_picking_id
             if existing and existing.state == 'done':
                 continue
+
             input_lines = order._sale_workshop_input_lines_to_reserve()
+
             if not input_lines:
                 order._sale_workshop_cancel_input_reservation(reset_lines=True)
                 continue
+
             order._sale_workshop_cancel_input_reservation(reset_lines=False)
             order._sale_workshop_create_reservation_picking(input_lines)
+
         return True
 
-    def _sale_workshop_reserved_qty_for_lot(self, product, lot):
+    # ------------------------------------------------------------------
+    # Stock validation helpers
+    # ------------------------------------------------------------------
+
+    def _sale_workshop_reserved_qty_for_lot(self, product, lot, location=False):
+        """
+        Cantidad reservada por el picking interno de ESTA MISMA OT.
+
+        Esta cantidad debe considerarse disponible para la OT porque ya fue
+        apartada precisamente para enviarse a taller.
+        """
         self.ensure_one()
+
         picking = self.sale_workshop_reservation_picking_id
         if not picking or picking.state in ('cancel', 'done'):
             return 0.0
+
+        location_ids = False
+        if location:
+            location_ids = set(
+                self.env['stock.location'].search([
+                    ('id', 'child_of', location.id),
+                ]).ids
+            )
+
         qty = 0.0
-        for ml in picking.move_ids.move_line_ids.filtered(lambda l: l.product_id == product and l.lot_id == lot):
+
+        for ml in picking.move_ids.move_line_ids.filtered(
+            lambda l: l.product_id == product and l.lot_id == lot
+        ):
+            if location_ids and ml.location_id.id not in location_ids:
+                continue
+
             if 'quantity' in ml._fields:
                 qty += ml.quantity or 0.0
             elif 'reserved_uom_qty' in ml._fields:
                 qty += ml.reserved_uom_qty or 0.0
             elif 'qty_done' in ml._fields:
                 qty += ml.qty_done or 0.0
+
         return qty
+
+    def _sale_workshop_quant_qty_for_lot(self, product, lot, location=False):
+        self.ensure_one()
+
+        domain = [
+            ('product_id', '=', product.id),
+            ('lot_id', '=', lot.id),
+            ('location_id.usage', '=', 'internal'),
+        ]
+
+        if location:
+            domain.append(('location_id', 'child_of', location.id))
+
+        total_qty = 0.0
+        reserved_qty = 0.0
+
+        quants = self.env['stock.quant'].sudo().search(domain)
+
+        for quant in quants:
+            total_qty += quant.quantity or 0.0
+
+            if 'reserved_quantity' in quant._fields:
+                reserved_qty += quant.reserved_quantity or 0.0
+
+        return {
+            'total_qty': total_qty,
+            'reserved_qty': reserved_qty,
+            'free_qty': total_qty - reserved_qty,
+            'quant_count': len(quants),
+        }
+
+    def _sale_workshop_effective_available_qty_for_input_line(self, input_line):
+        self.ensure_one()
+
+        if not input_line.product_id or not input_line.lot_id:
+            return {
+                'total_qty': 0.0,
+                'reserved_qty': 0.0,
+                'free_qty': 0.0,
+                'own_reserved_qty': 0.0,
+                'effective_available_qty': 0.0,
+                'quant_count': 0,
+            }
+
+        location = input_line.location_id or self.location_src_id
+
+        quant_data = self._sale_workshop_quant_qty_for_lot(
+            input_line.product_id,
+            input_line.lot_id,
+            location=location,
+        )
+
+        own_reserved_qty = self._sale_workshop_reserved_qty_for_lot(
+            input_line.product_id,
+            input_line.lot_id,
+            location=location,
+        )
+
+        effective_available_qty = (quant_data.get('free_qty') or 0.0) + own_reserved_qty
+
+        return {
+            'total_qty': quant_data.get('total_qty') or 0.0,
+            'reserved_qty': quant_data.get('reserved_qty') or 0.0,
+            'free_qty': quant_data.get('free_qty') or 0.0,
+            'own_reserved_qty': own_reserved_qty,
+            'effective_available_qty': effective_available_qty,
+            'quant_count': quant_data.get('quant_count') or 0,
+        }
+
+    def _sale_workshop_assert_input_line_effective_available(self, input_line):
+        self.ensure_one()
+
+        qty_required = input_line.qty_in or 0.0
+        qty_data = self._sale_workshop_effective_available_qty_for_input_line(input_line)
+
+        rounding = (
+            input_line.product_id.uom_id.rounding
+            if input_line.product_id and input_line.product_id.uom_id
+            else 0.00001
+        )
+
+        _logger.info(
+            '[STONE WORKSHOP SALE STOCK] order=%s input_line=%s product=%s lot=%s '
+            'total=%s reserved=%s free=%s own_reserved=%s effective=%s required=%s location=%s',
+            self.name,
+            input_line.id,
+            input_line.product_id.display_name if input_line.product_id else '',
+            input_line.lot_id.name if input_line.lot_id else '',
+            qty_data.get('total_qty'),
+            qty_data.get('reserved_qty'),
+            qty_data.get('free_qty'),
+            qty_data.get('own_reserved_qty'),
+            qty_data.get('effective_available_qty'),
+            qty_required,
+            input_line.location_id.display_name if input_line.location_id else (
+                self.location_src_id.display_name if self.location_src_id else ''
+            ),
+        )
+
+        if float_compare(
+            qty_data.get('effective_available_qty') or 0.0,
+            qty_required,
+            precision_rounding=rounding,
+        ) < 0:
+            raise UserError(_(
+                'No hay existencias suficientes para el lote %(lot)s.\n\n'
+                'Producto: %(product)s\n'
+                'Existencia total: %(total)s\n'
+                'Reservado total: %(reserved)s\n'
+                'Libre real: %(free)s\n'
+                'Reservado por esta OT: %(own_reserved)s\n'
+                'Disponible efectivo: %(effective)s\n'
+                'Requerido: %(required)s'
+            ) % {
+                'lot': input_line.lot_id.name if input_line.lot_id else '',
+                'product': input_line.product_id.display_name if input_line.product_id else '',
+                'total': qty_data.get('total_qty') or 0.0,
+                'reserved': qty_data.get('reserved_qty') or 0.0,
+                'free': qty_data.get('free_qty') or 0.0,
+                'own_reserved': qty_data.get('own_reserved_qty') or 0.0,
+                'effective': qty_data.get('effective_available_qty') or 0.0,
+                'required': qty_required,
+            })
+
+        return True
+
+    def _sale_workshop_all_inputs_covered_by_own_reservation(self):
+        self.ensure_one()
+
+        input_lines = self.input_line_ids.filtered(
+            lambda l: l.state != 'cancelled'
+            and not l.is_consumed
+            and l.product_id
+            and l.lot_id
+            and (l.qty_in or 0.0) > 0.0
+        )
+
+        if not input_lines:
+            return False
+
+        for input_line in input_lines:
+            self._sale_workshop_assert_input_line_effective_available(input_line)
+
+        return True
 
     def _get_available_qty_for_lot(self, product, lot, location=False):
         qty = super()._get_available_qty_for_lot(product, lot, location=location)
         self.ensure_one()
-        # La validación del taller debe considerar como disponible lo que ya está reservado
-        # por esta misma OT; de lo contrario se bloquearía al validar/enviar a taller.
-        return qty + self._sale_workshop_reserved_qty_for_lot(product, lot)
+
+        return qty + self._sale_workshop_reserved_qty_for_lot(
+            product,
+            lot,
+            location=location,
+        )
+
+    def _validate_business_rules(self):
+        """
+        Evita falso negativo de stock cuando el material ya fue reservado por
+        el picking interno de esta misma OT.
+
+        El validador base puede ver:
+            total = 4.86
+            reserved = 4.86
+            free = 0.0
+
+        Pero si reserved pertenece al picking de reserva de esta OT, entonces
+        para esta OT el disponible efectivo es:
+            free + own_reserved = 4.86
+        """
+        try:
+            return super()._validate_business_rules()
+        except UserError as error:
+            message = str(error).lower()
+
+            stock_error_terms = (
+                'existencia',
+                'existencias',
+                'stock',
+                'disponible',
+                'insuficiente',
+                'suficiente',
+            )
+
+            is_stock_error = any(term in message for term in stock_error_terms)
+
+            if not is_stock_error:
+                raise
+
+            for order in self:
+                if (
+                    order.sale_order_id
+                    and order.sale_workshop_reservation_picking_id
+                    and order._sale_workshop_all_inputs_covered_by_own_reservation()
+                ):
+                    _logger.warning(
+                        '[STONE WORKSHOP SALE] Se ignoró falso negativo de stock en %s '
+                        'porque los insumos están cubiertos por su propia reserva %s. '
+                        'Error original: %s',
+                        order.name,
+                        order.sale_workshop_reservation_picking_id.name,
+                        str(error),
+                    )
+                    continue
+
+                raise
+
+            return True
 
     # ------------------------------------------------------------------
     # Workshop flow hooks
@@ -320,32 +575,45 @@ class WorkshopOrder(models.Model):
 
     def action_send_to_workshop(self):
         handled = self.env['workshop.order']
+
         for order in self:
             picking = order.sale_workshop_reservation_picking_id
             pending_inputs = order._sale_workshop_input_lines_to_reserve()
+
             if not order.sale_order_id or not picking or picking.state in ('cancel', 'done') or not pending_inputs:
                 continue
 
             if order.state in ('draft', 'validated'):
                 order.action_confirm()
+
             if order.state not in ('confirmed', 'sent_to_workshop'):
                 raise UserError(_('Solo puedes enviar a taller órdenes confirmadas.'))
+
             order._validate_business_rules()
             order._validate_picking(picking)
+
             order.consume_picking_ids = [(4, picking.id)]
+
             pending_inputs.with_context(skip_sale_workshop_reservation=True).write({
                 'state': 'sent_to_workshop',
                 'is_consumed': True,
                 'consume_picking_id': picking.id,
             })
+
             order.write({'state': 'sent_to_workshop'})
             order._sale_workshop_sync_selection_states()
-            order.message_post(body=_('Material reservado enviado a taller con el picking %s.') % picking.name)
+
+            order.message_post(
+                body=_('Material reservado enviado a taller con el picking %s.') % picking.name
+            )
+
             handled |= order
 
         remaining = self - handled
+
         if remaining:
             return super(WorkshopOrder, remaining).action_send_to_workshop()
+
         return True
 
     def action_receive_outputs(self):
@@ -361,19 +629,25 @@ class WorkshopOrder(models.Model):
     def action_cancel(self):
         for order in self:
             picking = order.sale_workshop_reservation_picking_id
+
             if picking and picking.state not in ('done', 'cancel'):
                 order._sale_workshop_cancel_input_reservation(reset_lines=True)
+
             order.sale_workshop_input_selection_ids.filtered(
                 lambda s: s.state != 'moved_to_workshop'
             ).write({'state': 'cancelled'})
+
         return super().action_cancel()
 
     def _sale_workshop_assign_outputs_to_sale(self):
         assigned_any = False
+
         for order in self:
             sale_line = order.sale_line_id
+
             if not sale_line or not sale_line.exists() or not order.sale_order_id:
                 continue
+
             output_lines = order.output_line_ids.filtered(
                 lambda o: o.state in ('produced', 'received')
                 and o.output_type not in ('scrap', 'rejected')
@@ -381,6 +655,7 @@ class WorkshopOrder(models.Model):
                 and o.lot_id
                 and (o.qty_out or 0.0) > 0.0
             )
+
             if not output_lines:
                 continue
 
@@ -388,35 +663,51 @@ class WorkshopOrder(models.Model):
             output_lot_ids = set(output_lines.mapped('lot_id').ids)
             lot_ids = list(current_lot_ids | output_lot_ids)
 
-            breakdown = sale_line._stone_workshop_parse_breakdown() if hasattr(sale_line, '_stone_workshop_parse_breakdown') else {}
+            breakdown = (
+                sale_line._stone_workshop_parse_breakdown()
+                if hasattr(sale_line, '_stone_workshop_parse_breakdown')
+                else {}
+            )
+
             for output in output_lines:
                 key = str(output.lot_id.id)
                 breakdown[key] = breakdown.get(key, 0.0) + (output.qty_out or 0.0)
 
             vals = {}
+
             if 'lot_ids' in sale_line._fields:
                 vals['lot_ids'] = [(6, 0, lot_ids)]
+
             if 'x_lot_breakdown_json' in sale_line._fields:
                 vals['x_lot_breakdown_json'] = breakdown
+
             if vals:
                 sale_line.with_context(
                     skip_stone_workshop_product_defaults=True,
                     skip_sale_workshop_reservation=True,
                 ).write(vals)
+
                 if hasattr(sale_line, '_sync_lots_to_picking_moves'):
                     sale_line._sync_lots_to_picking_moves()
+
                 assigned_any = True
-                order.message_post(body=_('Se asignaron %(count)s lote(s) finales al pedido %(sale)s.') % {
+
+                order.message_post(body=_(
+                    'Se asignaron %(count)s lote(s) finales al pedido %(sale)s.'
+                ) % {
                     'count': len(output_lot_ids),
                     'sale': order.sale_order_id.name,
                 })
+
                 order.sale_order_id.message_post(body=_(
-                    'Taller %(workshop)s terminó producto final para la línea %(line)s. Lotes asignados: %(lots)s.'
+                    'Taller %(workshop)s terminó producto final para la línea %(line)s. '
+                    'Lotes asignados: %(lots)s.'
                 ) % {
                     'workshop': order.name,
                     'line': sale_line.product_id.display_name,
                     'lots': ', '.join(output_lines.mapped('lot_id.name')),
                 })
+
         return assigned_any
 
 
@@ -442,36 +733,71 @@ class WorkshopInputLine(models.Model):
         readonly=True,
     )
 
+    def _check_stock_availability(self):
+        """
+        Valida stock considerando la reserva propia de órdenes de taller
+        originadas desde venta.
+        """
+        sale_linked_lines = self.filtered(
+            lambda l:
+                l.order_id
+                and l.order_id.sale_order_id
+                and l.order_id.sale_workshop_reservation_picking_id
+        )
+
+        normal_lines = self - sale_linked_lines
+
+        if normal_lines:
+            try:
+                super(WorkshopInputLine, normal_lines)._check_stock_availability()
+            except AttributeError:
+                pass
+
+        for line in sale_linked_lines:
+            line.order_id._sale_workshop_assert_input_line_effective_available(line)
+
+        return True
+
     @api.model_create_multi
     def create(self, vals_list):
         lines = super().create(vals_list)
+
         if not self.env.context.get('skip_sale_workshop_reservation'):
             lines.mapped('order_id')._sale_workshop_refresh_input_reservation()
+
         return lines
 
     def write(self, vals):
         orders = self.mapped('order_id')
+
         res = super().write(vals)
+
         if (
             not self.env.context.get('skip_sale_workshop_reservation')
             and any(key in vals for key in ('lot_id', 'product_id', 'qty_in', 'area_sqm', 'location_id', 'state'))
         ):
             (orders | self.mapped('order_id'))._sale_workshop_refresh_input_reservation()
+
         (orders | self.mapped('order_id'))._sale_workshop_sync_selection_states()
+
         return res
 
     def unlink(self):
         orders = self.mapped('order_id')
         selections = self.mapped('sale_workshop_input_selection_ids')
+
         res = super().unlink()
+
         if selections:
             selections.write({
                 'workshop_input_line_id': False,
                 'workshop_order_id': False,
                 'state': 'selected',
             })
+
         if not self.env.context.get('skip_sale_workshop_reservation'):
             orders._sale_workshop_refresh_input_reservation()
+
         return res
 
 
