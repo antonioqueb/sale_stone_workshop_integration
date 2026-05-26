@@ -6,6 +6,7 @@
         <field name="inherit_id" ref="sale.view_order_form"/>
         <field name="priority">120</field>
         <field name="arch" type="xml">
+
             <xpath expr="//header" position="inside">
                 <button name="action_create_stone_workshop_orders"
                         string="Crear OT taller"
@@ -20,20 +21,40 @@
                         class="oe_stat_button"
                         icon="fa-industry"
                         invisible="stone_workshop_order_count == 0">
-                    <field name="stone_workshop_order_count" widget="statinfo" string="Taller"/>
+                    <field name="stone_workshop_order_count"
+                           widget="statinfo"
+                           string="Taller"/>
                 </button>
             </xpath>
 
             <xpath expr="//field[@name='order_line']/list/field[@name='product_id']" position="after">
-                <field name="stone_workshop_required" optional="hide"/>
-                <field name="stone_workshop_assignment_state" optional="show" widget="badge"
+                <field name="stone_workshop_required"
+                       string="Requiere taller"
+                       widget="boolean_toggle"
+                       optional="show"/>
+
+                <field name="stone_workshop_assignment_state"
+                       string="Estado taller"
+                       optional="show"
+                       widget="badge"
                        decoration-info="stone_workshop_assignment_state in ('pending_inputs', 'outputs_pending')"
                        decoration-warning="stone_workshop_assignment_state in ('reserved_inputs', 'in_workshop')"
                        decoration-success="stone_workshop_assignment_state == 'assigned'"
                        decoration-muted="stone_workshop_assignment_state in ('none', 'cancelled')"/>
-                <field name="stone_workshop_base_product_id" optional="hide"/>
-                <field name="stone_workshop_process_id" optional="hide"/>
-                <field name="stone_workshop_order_id" optional="show" readonly="1"/>
+
+                <field name="stone_workshop_base_product_id"
+                       string="Producto base"
+                       optional="hide"/>
+
+                <field name="stone_workshop_process_id"
+                       string="Proceso taller"
+                       optional="hide"/>
+
+                <field name="stone_workshop_order_id"
+                       string="OT taller"
+                       optional="show"
+                       readonly="1"/>
+
                 <field name="stone_workshop_auto_create" column_invisible="True"/>
                 <field name="stone_workshop_operation_mode" column_invisible="True"/>
                 <field name="stone_workshop_trigger" column_invisible="True"/>
@@ -45,15 +66,22 @@
             </xpath>
 
             <xpath expr="//notebook" position="inside">
-                <page string="Taller" name="stone_workshop_orders" invisible="stone_workshop_order_count == 0">
+                <page string="Taller"
+                      name="stone_workshop_orders"
+                      invisible="stone_workshop_order_count == 0">
+
                     <group>
                         <group>
                             <field name="stone_workshop_order_count" readonly="1"/>
                             <field name="stone_workshop_pending_count" readonly="1"/>
                         </group>
                     </group>
+
                     <field name="stone_workshop_order_ids" readonly="1">
-                        <list decoration-success="state == 'done'" decoration-warning="state in ('confirmed', 'sent_to_workshop', 'in_progress', 'partial_done')" decoration-muted="state == 'cancel'">
+                        <list decoration-success="state == 'done'"
+                              decoration-warning="state in ('confirmed', 'sent_to_workshop', 'in_progress', 'partial_done')"
+                              decoration-muted="state == 'cancel'">
+
                             <field name="name"/>
                             <field name="sale_line_id"/>
                             <field name="input_product_id"/>
@@ -67,6 +95,7 @@
                     </field>
                 </page>
             </xpath>
+
         </field>
     </record>
 </odoo>
