@@ -1,3 +1,9 @@
+## ./__init__.py
+```py
+# -*- coding: utf-8 -*-
+
+from . import models```
+
 ## ./__manifest__.py
 ```py
 # -*- coding: utf-8 -*-
@@ -7,15 +13,15 @@
     'category': 'Sales/Manufacturing',
     'summary': 'Integra venta, selección de placas, taller y entregas para transformar producto base en producto final',
     'description': """
-Integración operativa para piedra natural:
-- Venta siempre sobre el producto final prometido al cliente.
-- Orden de taller vinculada a la línea de venta cuando el producto final requiere proceso.
-- Selección visual independiente de placas base/insumos desde la venta.
-- Reserva de placas base para taller sin asignarlas como lotes de la línea final.
-- Consumo de producto base y producción de producto final desde Stone Workshop.
-- Asignación automática de lotes finales al pedido de origen al recibir salidas de taller.
-- Exclusión de placas reservadas en taller y selecciones base desde el selector visual de venta.
-    """,
+            Integración operativa para piedra natural:
+            - Venta siempre sobre el producto final prometido al cliente.
+            - Orden de taller vinculada a la línea de venta cuando el producto final requiere proceso.
+            - Selección visual independiente de placas base/insumos desde la venta.
+            - Reserva de placas base para taller sin asignarlas como lotes de la línea final.
+            - Consumo de producto base y producción de producto final desde Stone Workshop.
+            - Asignación automática de lotes finales al pedido de origen al recibir salidas de taller.
+            - Exclusión de placas reservadas en taller y selecciones base desde el selector visual de venta.
+                   """,
     'author': 'Alphaqueb Consulting SAS',
     'website': 'https://alphaqueb.com',
     'license': 'LGPL-3',
@@ -49,8 +55,6 @@ Integración operativa para piedra natural:
 ## ./models/__init__.py
 ```py
 # -*- coding: utf-8 -*-
-
-from . import product
 from . import sale_workshop_input_selection
 from . import sale_order_line
 from . import sale_order
