@@ -2339,6 +2339,10 @@ class WorkshopOrder(models.Model):
             return True
 
         if picking.state != 'cancel':
+            # Liberar reservas del quant antes de cancelar, para no dejar
+            # reserved_quantity huérfano cuando los overrides de unlink
+            # corren bajo contexto bypass.
+            picking.move_ids._do_unreserve()
             picking.with_context(**self._sale_workshop_stock_context()).action_cancel()
 
         if reset_lines:
@@ -2437,6 +2441,8 @@ class WorkshopOrder(models.Model):
 
         for picking in stale_pickings:
             if picking.state not in ('done', 'cancel'):
+                # Liberar el quant antes de cancelar para no dejar reserva huérfana.
+                picking.move_ids._do_unreserve()
                 picking.with_context(**self._sale_workshop_stock_context()).action_cancel()
 
         return True
@@ -2448,6 +2454,14 @@ class WorkshopOrder(models.Model):
         Este flujo evita que módulos externos de reserva por lote completo creen
         líneas automáticas que choquen con las líneas exactas seleccionadas desde
         el selector de taller.
+
+        Punto crítico:
+        Al confirmar los moves, stock_whole_lot_removal puede crear líneas
+        automáticas que reservan lotes. Esas líneas deben liberarse con
+        _do_unreserve() (no con unlink bajo contexto bypass), porque el unlink
+        bypasseado NO decrementa reserved_quantity del quant y deja reserva
+        huérfana que se DUPLICA cuando la línea exacta vuelve a reservar el
+        mismo lote.
         """
         self.ensure_one()
 
@@ -2510,20 +2524,27 @@ class WorkshopOrder(models.Model):
             except TypeError:
                 moves.with_context(**bypass_ctx)._action_confirm()
 
+        # CLAVE: liberar de verdad las reservas automáticas.
+        # No basta unlink() de las move lines: bajo el contexto bypass los
+        # overrides de stock_whole_lot_removal / stock_lot_dimensions no
+        # decrementan reserved_quantity del quant, dejando reserva huérfana
+        # que se DUPLICA cuando la línea exacta vuelve a reservar el mismo lote.
+        # _do_unreserve() sí libera el quant correctamente.
         auto_lines = moves.mapped('move_line_ids')
         if auto_lines:
             _logger.info(
-                '[STONE WORKSHOP SALE] Eliminando %s línea(s) automática(s) del picking %s antes de crear reserva exacta.',
+                '[STONE WORKSHOP SALE] Liberando %s reserva(s) automática(s) del picking %s antes de crear reserva exacta.',
                 len(auto_lines),
                 picking.name,
             )
-            auto_lines.with_context(**bypass_ctx).unlink()
+        moves._do_unreserve()
 
         created_move_lines = self.env['stock.move.line']
 
         for move, line, source_location in move_specs:
+            # Defensa: si algún hook volvió a reservar, liberar antes de la línea exacta.
             if move.move_line_ids:
-                move.move_line_ids.with_context(**bypass_ctx).unlink()
+                move._do_unreserve()
 
             ml_vals = {
                 'move_id': move.id,
@@ -2940,12 +2961,25 @@ class WorkshopOrder(models.Model):
         return super().action_validate_order()
 
     def action_receive_outputs(self):
-        res = super().action_receive_outputs()
+        # La validación base del picking de entrada de salidas dispara
+        # _trigger_assign(), que re-reserva automáticamente movimientos de
+        # entregas pendientes del mismo producto. Esa reasignación automática
+        # puede chocar con el guardia de duplicidad de lote de
+        # stock_lot_dimensions durante la cascada (no es una selección manual).
+        # Se corre con el contexto de bypass que ya usa el módulo para sus
+        # propios pickings, evitando que la cascada interna aborte la recepción.
+        res = super(
+            WorkshopOrder,
+            self.with_context(**self._sale_workshop_stock_context()),
+        ).action_receive_outputs()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 
     def action_done(self):
-        res = super().action_done()
+        res = super(
+            WorkshopOrder,
+            self.with_context(**self._sale_workshop_stock_context()),
+        ).action_done()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 
