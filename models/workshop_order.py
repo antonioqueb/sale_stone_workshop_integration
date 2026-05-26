@@ -828,12 +828,25 @@ class WorkshopOrder(models.Model):
         return super().action_validate_order()
 
     def action_receive_outputs(self):
-        res = super().action_receive_outputs()
+        # La validación base del picking de entrada de salidas dispara
+        # _trigger_assign(), que re-reserva automáticamente movimientos de
+        # entregas pendientes del mismo producto. Esa reasignación automática
+        # puede chocar con el guardia de duplicidad de lote de
+        # stock_lot_dimensions durante la cascada (no es una selección manual).
+        # Se corre con el contexto de bypass que ya usa el módulo para sus
+        # propios pickings, evitando que la cascada interna aborte la recepción.
+        res = super(
+            WorkshopOrder,
+            self.with_context(**self._sale_workshop_stock_context()),
+        ).action_receive_outputs()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 
     def action_done(self):
-        res = super().action_done()
+        res = super(
+            WorkshopOrder,
+            self.with_context(**self._sale_workshop_stock_context()),
+        ).action_done()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 
