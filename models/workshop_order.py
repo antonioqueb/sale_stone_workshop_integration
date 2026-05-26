@@ -221,21 +221,100 @@ class WorkshopOrder(models.Model):
 
         return True
 
+    def _sale_workshop_find_stale_reservation_pickings(self, input_lines=False):
+        """
+        Busca reservas de taller obsoletas del mismo flujo comercial.
+
+        Caso que corrige:
+            total=6.07
+            reserved=12.14
+            own_reserved=6.07
+
+        Eso indica que existe otra reserva activa de 6.07 para el mismo lote.
+        Si esa otra reserva es una reserva de taller anterior sin dueño activo,
+        se debe cancelar antes de validar.
+        """
+        self.ensure_one()
+
+        if not self.sale_order_id:
+            return self.env['stock.picking']
+
+        active_input_lines = input_lines or self._sale_workshop_input_lines_to_reserve()
+        lot_ids = active_input_lines.mapped('lot_id').ids
+        product_ids = active_input_lines.mapped('product_id').ids
+
+        if not lot_ids or not product_ids:
+            return self.env['stock.picking']
+
+        domain = [
+            ('state', 'not in', ('done', 'cancel')),
+            ('origin', 'ilike', self.sale_order_id.name),
+            ('origin', 'ilike', 'Reserva taller'),
+            ('move_ids.move_line_ids.lot_id', 'in', lot_ids),
+            ('move_ids.move_line_ids.product_id', 'in', product_ids),
+        ]
+
+        pickings = self.env['stock.picking'].search(domain)
+
+        current_picking = self.sale_workshop_reservation_picking_id
+        if current_picking:
+            pickings -= current_picking
+
+        if not pickings:
+            return pickings
+
+        owner_orders = self.env['workshop.order'].search([
+            ('sale_workshop_reservation_picking_id', 'in', pickings.ids),
+            ('state', 'not in', ('done', 'cancel')),
+        ])
+
+        owned_by_other_active_order = owner_orders.filtered(lambda o: o != self)
+        protected_pickings = owned_by_other_active_order.mapped('sale_workshop_reservation_picking_id')
+
+        stale_pickings = pickings - protected_pickings
+
+        if protected_pickings:
+            _logger.warning(
+                '[STONE WORKSHOP SALE] No se cancelan reservas de taller protegidas por otra OT activa. '
+                'Orden=%s Pickings=%s Owners=%s',
+                self.name,
+                protected_pickings.mapped('name'),
+                owned_by_other_active_order.mapped('name'),
+            )
+
+        return stale_pickings
+
+    def _sale_workshop_cleanup_stale_reservations(self, input_lines=False):
+        """
+        Cancela reservas de taller obsoletas del mismo pedido/lote antes de validar disponibilidad.
+        No cancela reservas protegidas por otra OT activa.
+        """
+        self.ensure_one()
+
+        stale_pickings = self._sale_workshop_find_stale_reservation_pickings(input_lines=input_lines)
+
+        if not stale_pickings:
+            return True
+
+        _logger.warning(
+            '[STONE WORKSHOP SALE] Cancelando reservas obsoletas antes de validar %s: %s',
+            self.name,
+            stale_pickings.mapped('name'),
+        )
+
+        for picking in stale_pickings:
+            if picking.state not in ('done', 'cancel'):
+                picking.with_context(**self._sale_workshop_stock_context()).action_cancel()
+
+        return True
+
     def _sale_workshop_create_reservation_picking(self, input_lines):
         """
         Crea el picking interno de reserva para placas base seleccionadas desde venta.
 
-        Punto clave:
-        stock_whole_lot_removal puede generar líneas automáticas al confirmar/asignar.
-        Luego, al crear las líneas exactas seleccionadas desde taller, stock_lot_dimensions
-        puede bloquear por duplicidad dentro del mismo picking.
-
-        Este flujo evita el choque:
-        1. Crea movimientos.
-        2. Confirma movimientos con flags de bypass.
-        3. Limpia cualquier línea automática.
-        4. Crea únicamente las líneas exactas seleccionadas por la venta/taller.
-        5. No ejecuta picking.action_assign() después de crear las líneas exactas.
+        Este flujo evita que módulos externos de reserva por lote completo creen
+        líneas automáticas que choquen con las líneas exactas seleccionadas desde
+        el selector de taller.
         """
         self.ensure_one()
 
@@ -246,6 +325,8 @@ class WorkshopOrder(models.Model):
 
         if not self.location_src_id or not self.location_workshop_id:
             raise UserError(_('Define ubicación origen y ubicación taller antes de reservar placas.'))
+
+        self._sale_workshop_cleanup_stale_reservations(input_lines=input_lines)
 
         picking_type = self._get_internal_picking_type()
         bypass_ctx = self._sale_workshop_stock_context()
@@ -296,7 +377,6 @@ class WorkshopOrder(models.Model):
             except TypeError:
                 moves.with_context(**bypass_ctx)._action_confirm()
 
-        # Si algún módulo creó líneas automáticas al confirmar, se eliminan antes de crear la reserva exacta.
         auto_lines = moves.mapped('move_line_ids')
         if auto_lines:
             _logger.info(
@@ -309,7 +389,6 @@ class WorkshopOrder(models.Model):
         created_move_lines = self.env['stock.move.line']
 
         for move, line, source_location in move_specs:
-            # Limpieza defensiva por si algún hook creó líneas en el movimiento específico.
             if move.move_line_ids:
                 move.move_line_ids.with_context(**bypass_ctx).unlink()
 
@@ -374,6 +453,7 @@ class WorkshopOrder(models.Model):
                 order._sale_workshop_cancel_input_reservation(reset_lines=True)
                 continue
 
+            order._sale_workshop_cleanup_stale_reservations(input_lines=input_lines)
             order._sale_workshop_cancel_input_reservation(reset_lines=False)
             order._sale_workshop_create_reservation_picking(input_lines)
 
@@ -384,12 +464,6 @@ class WorkshopOrder(models.Model):
     # ------------------------------------------------------------------
 
     def _sale_workshop_reserved_qty_for_lot(self, product, lot, location=False):
-        """
-        Cantidad reservada por el picking interno de esta misma OT.
-
-        Esta cantidad cuenta como disponible para esta OT porque ya fue apartada
-        precisamente para enviarse a taller.
-        """
         self.ensure_one()
 
         picking = self.sale_workshop_reservation_picking_id
@@ -422,6 +496,50 @@ class WorkshopOrder(models.Model):
                 qty += ml.qty_done or 0.0
 
         return qty
+
+    def _sale_workshop_related_reserved_qty_for_lot(self, product, lot, location=False):
+        """
+        Cantidad reservada compatible con esta OT.
+
+        Incluye:
+        - Picking de reserva actual.
+        - Reservas de taller del mismo pedido que no tienen otra OT activa como dueña.
+
+        No incluye:
+        - Reservas de otra OT activa.
+        - Reservas de entregas o documentos comerciales ajenos.
+        """
+        self.ensure_one()
+
+        current_qty = self._sale_workshop_reserved_qty_for_lot(product, lot, location=location)
+
+        stale_pickings = self._sale_workshop_find_stale_reservation_pickings()
+        if not stale_pickings:
+            return current_qty
+
+        location_ids = False
+        if location:
+            location_ids = set(
+                self.env['stock.location'].search([
+                    ('id', 'child_of', location.id),
+                ]).ids
+            )
+
+        stale_qty = 0.0
+        for ml in stale_pickings.mapped('move_ids.move_line_ids').filtered(
+            lambda l: l.product_id == product and l.lot_id == lot
+        ):
+            if location_ids and ml.location_id.id not in location_ids:
+                continue
+
+            if 'quantity' in ml._fields:
+                stale_qty += ml.quantity or 0.0
+            elif 'reserved_uom_qty' in ml._fields:
+                stale_qty += ml.reserved_uom_qty or 0.0
+            elif 'qty_done' in ml._fields:
+                stale_qty += ml.qty_done or 0.0
+
+        return current_qty + stale_qty
 
     def _sale_workshop_quant_qty_for_lot(self, product, lot, location=False):
         self.ensure_one()
@@ -467,6 +585,10 @@ class WorkshopOrder(models.Model):
             }
 
         location = input_line.location_id or self.location_src_id
+
+        # Limpia reservas obsoletas antes de calcular, porque reserved_quantity
+        # puede venir inflado por pickings anteriores del mismo flujo.
+        self._sale_workshop_cleanup_stale_reservations(input_lines=input_line)
 
         quant_data = self._sale_workshop_quant_qty_for_lot(
             input_line.product_id,
@@ -563,6 +685,8 @@ class WorkshopOrder(models.Model):
         if not input_lines:
             return False
 
+        self._sale_workshop_cleanup_stale_reservations(input_lines=input_lines)
+
         for input_line in input_lines:
             self._sale_workshop_assert_input_line_effective_available(input_line)
 
@@ -642,6 +766,7 @@ class WorkshopOrder(models.Model):
             if order.state not in ('confirmed', 'sent_to_workshop'):
                 raise UserError(_('Solo puedes enviar a taller órdenes confirmadas.'))
 
+            order._sale_workshop_cleanup_stale_reservations(input_lines=pending_inputs)
             order._validate_business_rules()
 
             order.with_context(**order._sale_workshop_stock_context())._validate_picking(picking)
@@ -669,6 +794,17 @@ class WorkshopOrder(models.Model):
             return super(WorkshopOrder, remaining).action_send_to_workshop()
 
         return True
+
+    def action_validate_order(self):
+        for order in self:
+            if order.sale_order_id:
+                pending_inputs = order._sale_workshop_input_lines_to_reserve()
+                if pending_inputs:
+                    order._sale_workshop_cleanup_stale_reservations(input_lines=pending_inputs)
+                    for input_line in pending_inputs:
+                        order._sale_workshop_assert_input_line_effective_available(input_line)
+
+        return super().action_validate_order()
 
     def action_receive_outputs(self):
         res = super().action_receive_outputs()
@@ -705,19 +841,6 @@ class WorkshopOrder(models.Model):
         return 0.00001
 
     def _sale_workshop_assign_outputs_to_sale(self, manual=False):
-        """
-        Asigna lotes finales a la línea de venta de forma idempotente.
-
-        Antes se hacía:
-            breakdown[lot] = breakdown.get(lot, 0) + qty_out
-
-        Eso duplicaba cantidades si action_receive_outputs y luego
-        action_assign_outputs_to_sale se ejecutaban sobre las mismas salidas.
-
-        Ahora para los lotes producidos por la OT se fija el valor real
-        producido por lote:
-            breakdown[lot] = sum(qty_out de esa OT y ese lote)
-        """
         assigned_any = False
 
         for order in self:
