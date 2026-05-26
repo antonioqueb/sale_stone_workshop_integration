@@ -136,6 +136,15 @@ class WorkshopOrder(models.Model):
     # Reservation picking helpers
     # ------------------------------------------------------------------
 
+    def _sale_workshop_stock_context(self):
+        return {
+            'skip_whole_lot': True,
+            'skip_whole_lot_removal': True,
+            'skip_sale_workshop_reservation': True,
+            'skip_lot_duplicate_check': True,
+            'skip_stock_lot_duplicate_check': True,
+        }
+
     def _sale_workshop_move_line_qty_vals(self, qty):
         StockMoveLine = self.env['stock.move.line']
 
@@ -197,7 +206,7 @@ class WorkshopOrder(models.Model):
             return True
 
         if picking.state != 'cancel':
-            picking.action_cancel()
+            picking.with_context(**self._sale_workshop_stock_context()).action_cancel()
 
         if reset_lines:
             self.input_line_ids.filtered(
@@ -213,6 +222,21 @@ class WorkshopOrder(models.Model):
         return True
 
     def _sale_workshop_create_reservation_picking(self, input_lines):
+        """
+        Crea el picking interno de reserva para placas base seleccionadas desde venta.
+
+        Punto clave:
+        stock_whole_lot_removal puede generar líneas automáticas al confirmar/asignar.
+        Luego, al crear las líneas exactas seleccionadas desde taller, stock_lot_dimensions
+        puede bloquear por duplicidad dentro del mismo picking.
+
+        Este flujo evita el choque:
+        1. Crea movimientos.
+        2. Confirma movimientos con flags de bypass.
+        3. Limpia cualquier línea automática.
+        4. Crea únicamente las líneas exactas seleccionadas por la venta/taller.
+        5. No ejecuta picking.action_assign() después de crear las líneas exactas.
+        """
         self.ensure_one()
 
         if not input_lines:
@@ -224,12 +248,13 @@ class WorkshopOrder(models.Model):
             raise UserError(_('Define ubicación origen y ubicación taller antes de reservar placas.'))
 
         picking_type = self._get_internal_picking_type()
+        bypass_ctx = self._sale_workshop_stock_context()
 
         origin = '%s - Reserva taller' % (self.name or '')
         if self.sale_order_id:
             origin = '%s / %s - Reserva taller' % (self.sale_order_id.name, self.name)
 
-        picking = self.env['stock.picking'].create({
+        picking = self.env['stock.picking'].with_context(**bypass_ctx).create({
             'picking_type_id': picking_type.id,
             'location_id': self.location_src_id.id,
             'location_dest_id': self.location_workshop_id.id,
@@ -261,18 +286,32 @@ class WorkshopOrder(models.Model):
 
             move_vals.update(self._sale_workshop_move_qty_vals(line.product_id, line.qty_in))
 
-            move = StockMove.create(move_vals)
+            move = StockMove.with_context(**bypass_ctx).create(move_vals)
             moves |= move
             move_specs.append((move, line, source_location))
 
         if moves:
             try:
-                moves.with_context(skip_whole_lot=True)._action_confirm(merge=False)
+                moves.with_context(**bypass_ctx)._action_confirm(merge=False)
             except TypeError:
-                moves.with_context(skip_whole_lot=True)._action_confirm()
+                moves.with_context(**bypass_ctx)._action_confirm()
+
+        # Si algún módulo creó líneas automáticas al confirmar, se eliminan antes de crear la reserva exacta.
+        auto_lines = moves.mapped('move_line_ids')
+        if auto_lines:
+            _logger.info(
+                '[STONE WORKSHOP SALE] Eliminando %s línea(s) automática(s) del picking %s antes de crear reserva exacta.',
+                len(auto_lines),
+                picking.name,
+            )
+            auto_lines.with_context(**bypass_ctx).unlink()
+
+        created_move_lines = self.env['stock.move.line']
 
         for move, line, source_location in move_specs:
-            move.move_line_ids.unlink()
+            # Limpieza defensiva por si algún hook creó líneas en el movimiento específico.
+            if move.move_line_ids:
+                move.move_line_ids.with_context(**bypass_ctx).unlink()
 
             ml_vals = {
                 'move_id': move.id,
@@ -288,15 +327,16 @@ class WorkshopOrder(models.Model):
                 ml_vals['product_uom_id'] = line.product_id.uom_id.id
 
             ml_vals.update(self._sale_workshop_move_line_qty_vals(line.qty_in))
-            StockMoveLine.create(ml_vals)
 
-        try:
-            picking.action_assign()
-        except Exception:
-            _logger.exception(
-                '[STONE WORKSHOP SALE] No se pudo asignar automáticamente la reserva %s',
-                picking.name,
-            )
+            move_line = StockMoveLine.with_context(**bypass_ctx).create(ml_vals)
+            created_move_lines |= move_line
+
+        _logger.info(
+            '[STONE WORKSHOP SALE] Reserva exacta creada para %s. Moves=%s MoveLines=%s',
+            picking.name,
+            moves.ids,
+            created_move_lines.ids,
+        )
 
         self.with_context(skip_sale_workshop_reservation=True).write({
             'sale_workshop_reservation_picking_id': picking.id,
@@ -603,7 +643,8 @@ class WorkshopOrder(models.Model):
                 raise UserError(_('Solo puedes enviar a taller órdenes confirmadas.'))
 
             order._validate_business_rules()
-            order._validate_picking(picking)
+
+            order.with_context(**order._sale_workshop_stock_context())._validate_picking(picking)
 
             order.consume_picking_ids = [(4, picking.id)]
 
@@ -768,7 +809,6 @@ class WorkshopOrder(models.Model):
 
                 assigned_any = True
             else:
-                # Ya estaba correctamente asignado. No duplicar cantidades ni mensajes.
                 assigned_any = True
                 _logger.info(
                     '[STONE WORKSHOP SALE] Salidas de %s ya estaban asignadas a la línea %s. Sin cambios.',
