@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_workshop_order_form_sale_integration" model="ir.ui.view">
+        <field name="name">workshop.order.form.sale.integration</field>
+        <field name="model">workshop.order</field>
+        <field name="inherit_id" ref="stone_workshop.view_workshop_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_reserve_inputs_for_sale"
+                        string="Reservar placas venta"
+                        type="object"
+                        class="btn-secondary"
+                        invisible="not sale_order_id or state not in ('draft', 'validated', 'confirmed')"/>
+                <button name="action_release_sale_reservation"
+                        string="Liberar reserva"
+                        type="object"
+                        invisible="not sale_workshop_reserved or state not in ('draft', 'validated', 'confirmed')"/>
+                <button name="action_assign_outputs_to_sale"
+                        string="Asignar a pedido"
+                        type="object"
+                        class="btn-secondary"
+                        invisible="not sale_order_id or state not in ('partial_done', 'done')"/>
+            </xpath>
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_sale_order"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-shopping-cart"
+                        invisible="not sale_order_id">
+                    <div class="o_stat_info">
+                        <span class="o_stat_text">Venta</span>
+                        <span class="o_stat_value"><field name="sale_order_id" readonly="1"/></span>
+                    </div>
+                </button>
+                <button name="action_view_sale_workshop_reservation"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-lock"
+                        invisible="not sale_workshop_reservation_picking_id">
+                    <div class="o_stat_info">
+                        <span class="o_stat_text">Reserva</span>
+                        <span class="o_stat_value"><field name="sale_workshop_reservation_picking_id" readonly="1"/></span>
+                    </div>
+                </button>
+            </xpath>
+
+            <xpath expr="//field[@name='process_id']" position="after">
+                <field name="sale_order_id" readonly="1"/>
+                <field name="sale_line_id" readonly="1"/>
+                <field name="sale_partner_id" readonly="1"/>
+                <field name="sale_requested_qty" readonly="1"/>
+                <field name="sale_workshop_reserved" readonly="1"/>
+            </xpath>
+
+            <xpath expr="//field[@name='input_line_ids']/list/field[@name='reserved_origin']" position="after">
+                <field name="sale_order_id" optional="hide"/>
+                <field name="sale_line_id" optional="hide"/>
+            </xpath>
+
+            <xpath expr="//field[@name='output_line_ids']/list/field[@name='state']" position="after">
+                <field name="sale_order_id" optional="hide"/>
+                <field name="sale_line_id" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_workshop_order_list_sale_integration" model="ir.ui.view">
+        <field name="name">workshop.order.list.sale.integration</field>
+        <field name="model">workshop.order</field>
+        <field name="inherit_id" ref="stone_workshop.view_workshop_order_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='name']" position="after">
+                <field name="sale_order_id" optional="show"/>
+                <field name="sale_partner_id" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sale_order_form_stone_workshop_integration" model="ir.ui.view">
+        <field name="name">sale.order.form.stone.workshop.integration</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="priority">120</field>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_create_stone_workshop_orders"
+                        string="Crear OT taller"
+                        type="object"
+                        class="btn-secondary"
+                        invisible="state not in ('sale', 'done')"/>
+            </xpath>
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_stone_workshop_orders"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-industry"
+                        invisible="stone_workshop_order_count == 0">
+                    <field name="stone_workshop_order_count" widget="statinfo" string="Taller"/>
+                </button>
+            </xpath>
+
+            <xpath expr="//field[@name='order_line']/list/field[@name='product_id']" position="after">
+                <field name="stone_workshop_required" optional="hide"/>
+                <field name="stone_workshop_assignment_state" optional="show" widget="badge"
+                       decoration-info="stone_workshop_assignment_state in ('pending_inputs', 'outputs_pending')"
+                       decoration-warning="stone_workshop_assignment_state in ('reserved_inputs', 'in_workshop')"
+                       decoration-success="stone_workshop_assignment_state == 'assigned'"
+                       decoration-muted="stone_workshop_assignment_state in ('none', 'cancelled')"/>
+                <field name="stone_workshop_base_product_id" optional="hide"/>
+                <field name="stone_workshop_process_id" optional="hide"/>
+                <field name="stone_workshop_order_id" optional="show" readonly="1"/>
+                <field name="stone_workshop_auto_create" column_invisible="True"/>
+                <field name="stone_workshop_operation_mode" column_invisible="True"/>
+                <field name="stone_workshop_trigger" column_invisible="True"/>
+                <field name="stone_workshop_commercial_mode" column_invisible="True"/>
+                <field name="stone_workshop_service_product_id" column_invisible="True"/>
+                <field name="stone_is_workshop_service_line" column_invisible="True"/>
+                <field name="stone_workshop_parent_line_id" column_invisible="True"/>
+                <field name="stone_workshop_hide_from_customer" column_invisible="True"/>
+            </xpath>
+
+            <xpath expr="//notebook" position="inside">
+                <page string="Taller" name="stone_workshop_orders" invisible="stone_workshop_order_count == 0">
+                    <group>
+                        <group>
+                            <field name="stone_workshop_order_count" readonly="1"/>
+                            <field name="stone_workshop_pending_count" readonly="1"/>
+                        </group>
+                    </group>
+                    <field name="stone_workshop_order_ids" readonly="1">
+                        <list decoration-success="state == 'done'" decoration-warning="state in ('confirmed', 'sent_to_workshop', 'in_progress', 'partial_done')" decoration-muted="state == 'cancel'">
+                            <field name="name"/>
+                            <field name="sale_line_id"/>
+                            <field name="input_product_id"/>
+                            <field name="default_product_out_id"/>
+                            <field name="process_id"/>
+                            <field name="area_in_total"/>
+                            <field name="area_out_total"/>
+                            <field name="sale_workshop_reserved" widget="boolean_toggle"/>
+                            <field name="state" widget="badge"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
