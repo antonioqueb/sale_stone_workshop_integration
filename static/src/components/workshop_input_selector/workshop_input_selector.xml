@@ -7,12 +7,21 @@
                     t-att-class="state.canSelect ? 'swis-ready' : 'swis-disabled'"
                     t-att-title="state.tooltip"
                     t-on-click.stop.prevent="openPopup">
+
                 <i class="fa fa-cubes"/>
-                <span t-if="state.isLoading" class="swis-text">...</span>
+
+                <span t-if="state.isLoading" class="swis-text">
+                    ...
+                </span>
+
                 <span t-elif="state.selectedCount" class="swis-text">
                     <t t-esc="state.selectedCount"/> base · <t t-esc="fmt(state.selectedQty)"/>
                 </span>
-                <span t-else="" class="swis-text">Base</span>
+
+                <span t-else="" class="swis-text">
+                    Seleccionar
+                </span>
+
             </button>
         </div>
     </t>

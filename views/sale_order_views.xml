@@ -7,9 +7,6 @@
         <field name="priority">120</field>
         <field name="arch" type="xml">
 
-            <!-- ========================================================= -->
-            <!-- Header: acciones de taller desde la orden de venta         -->
-            <!-- ========================================================= -->
             <xpath expr="//header" position="inside">
                 <button name="action_create_stone_workshop_orders"
                         string="Crear OT taller"
@@ -24,9 +21,6 @@
                         invisible="state not in ('sale', 'done') or stone_workshop_input_selection_count == 0"/>
             </xpath>
 
-            <!-- ========================================================= -->
-            <!-- Smart button: órdenes de taller relacionadas               -->
-            <!-- ========================================================= -->
             <xpath expr="//div[@name='button_box']" position="inside">
                 <button name="action_view_stone_workshop_orders"
                         type="object"
@@ -39,14 +33,6 @@
                 </button>
             </xpath>
 
-            <!-- ========================================================= -->
-            <!-- Líneas de venta: integración taller                        -->
-            <!-- IMPORTANTE:
-                 Se inserta directamente dentro del list de order_line.
-                 No depende de product_id/product_template_id.
-                 El selector de placas base NO debe ser optional,
-                 porque si el usuario ocultó columnas, el botón desaparece.
-            ========================================================== -->
             <xpath expr="//field[@name='order_line']/list" position="inside">
 
                 <field name="stone_workshop_required"
@@ -91,7 +77,6 @@
                        optional="show"
                        readonly="1"/>
 
-                <!-- Campos técnicos requeridos para lógica, dominios y defaults -->
                 <field name="stone_workshop_auto_create" column_invisible="True"/>
                 <field name="stone_workshop_operation_mode" column_invisible="True"/>
                 <field name="stone_workshop_trigger" column_invisible="True"/>
@@ -103,9 +88,6 @@
 
             </xpath>
 
-            <!-- ========================================================= -->
-            <!-- Pestañas de seguimiento de taller                          -->
-            <!-- ========================================================= -->
             <xpath expr="//notebook" position="inside">
 
                 <page string="Taller"

@@ -1,4 +1,4 @@
-/** @odoo-module */
+/** @odoo-module **/
 
 import { registry } from "@web/core/registry";
 import { standardFieldProps } from "@web/views/fields/standard_field_props";
@@ -7,11 +7,14 @@ import { useService } from "@web/core/utils/hooks";
 
 export class SaleWorkshopInputSelector extends Component {
     static template = "sale_stone_workshop_integration.SaleWorkshopInputSelector";
-    static props = { ...standardFieldProps };
+    static props = {
+        ...standardFieldProps,
+    };
 
     setup() {
         this.orm = useService("orm");
         this.notification = useService("notification");
+
         this._popupRoot = null;
         this._keyHandler = null;
         this._searchTimeout = null;
@@ -39,13 +42,18 @@ export class SaleWorkshopInputSelector extends Component {
     }
 
     _getRecordId() {
-        const rec = this.props.record;
-        if (rec?.resId && typeof rec.resId === "number") {
-            return rec.resId;
+        const record = this.props.record;
+
+        if (record?.resId) {
+            const id = parseInt(record.resId, 10);
+            return Number.isInteger(id) && id > 0 ? id : null;
         }
-        if (rec?.data?.id && typeof rec.data.id === "number") {
-            return rec.data.id;
+
+        if (record?.data?.id) {
+            const id = parseInt(record.data.id, 10);
+            return Number.isInteger(id) && id > 0 ? id : null;
         }
+
         return null;
     }
 
@@ -70,6 +78,7 @@ export class SaleWorkshopInputSelector extends Component {
 
     async loadLineData() {
         const lineId = this._getRecordId();
+
         if (!lineId) {
             this.state.isLoading = false;
             this.state.canSelect = false;
@@ -81,6 +90,7 @@ export class SaleWorkshopInputSelector extends Component {
         }
 
         this.state.isLoading = true;
+
         try {
             const data = await this.orm.call(
                 "sale.order.line",
@@ -121,18 +131,22 @@ export class SaleWorkshopInputSelector extends Component {
         await this.loadLineData();
 
         const data = this.state.data;
+
         if (!data || !data.workshop_required) {
             this._warn("Esta línea no requiere taller.");
             return;
         }
+
         if (!data.base_product_id) {
             this._warn("Configura el producto base antes de seleccionar placas.");
             return;
         }
+
         if (!data.process_id) {
             this._warn("Configura el proceso de taller antes de seleccionar placas.");
             return;
         }
+
         if (!data.can_select) {
             this._warn("La selección de placas base solo está disponible en órdenes de venta confirmadas.");
             return;
@@ -153,10 +167,12 @@ export class SaleWorkshopInputSelector extends Component {
             clearTimeout(this._searchTimeout);
             this._searchTimeout = null;
         }
+
         if (this._keyHandler) {
             document.removeEventListener("keydown", this._keyHandler);
             this._keyHandler = null;
         }
+
         if (this._popupRoot) {
             this._popupRoot.remove();
             this._popupRoot = null;
@@ -199,22 +215,27 @@ export class SaleWorkshopInputSelector extends Component {
                                 Producto final: <strong>${this._escapeHtml(data.product_final_name || "")}</strong>
                             </div>
                         </div>
+
                         <div class="swis-header-actions">
                             <span class="swis-pill">
                                 <i class="fa fa-bullseye me-1"></i>
                                 Solicitado ${this.fmt(data.requested_qty || 0)}
                             </span>
+
                             <span class="swis-pill swis-pill-selected">
                                 <i class="fa fa-check-circle me-1"></i>
                                 <span id="swis-count">0</span> selec.
                             </span>
+
                             <span class="swis-pill swis-pill-total">
                                 <i class="fa fa-balance-scale me-1"></i>
                                 <span id="swis-total">0.00</span>
                             </span>
+
                             <button class="swis-btn swis-btn-primary" id="swis-confirm-top">
                                 <i class="fa fa-check me-1"></i> Confirmar
                             </button>
+
                             <button class="swis-btn swis-btn-ghost" id="swis-close">
                                 <i class="fa fa-times"></i>
                             </button>
@@ -226,22 +247,27 @@ export class SaleWorkshopInputSelector extends Component {
                             <label>Lote</label>
                             <input id="swis-f-lot" type="text" placeholder="Buscar lote..."/>
                         </div>
+
                         <div class="swis-filter">
                             <label>Bloque</label>
                             <input id="swis-f-bloque" type="text" placeholder="Bloque..."/>
                         </div>
+
                         <div class="swis-filter">
                             <label>Atado</label>
                             <input id="swis-f-atado" type="text" placeholder="Atado..."/>
                         </div>
+
                         <div class="swis-filter swis-filter-sm">
                             <label>Alto mín.</label>
                             <input id="swis-f-alto" type="number" step="0.01"/>
                         </div>
+
                         <div class="swis-filter swis-filter-sm">
                             <label>Ancho mín.</label>
                             <input id="swis-f-ancho" type="number" step="0.01"/>
                         </div>
+
                         <div class="swis-filter swis-filter-sm">
                             <label>Tipo</label>
                             <select id="swis-f-tipo">
@@ -252,11 +278,13 @@ export class SaleWorkshopInputSelector extends Component {
                                 <option value="retazo">Retazo</option>
                             </select>
                         </div>
+
                         <div class="swis-filter-actions">
                             <button class="swis-btn swis-btn-light" id="swis-clear">
                                 <i class="fa fa-square-o me-1"></i> Limpiar
                             </button>
                         </div>
+
                         <div class="swis-filter-stat" id="swis-stat">Buscando...</div>
                     </div>
 
@@ -281,6 +309,7 @@ export class SaleWorkshopInputSelector extends Component {
         `;
 
         const close = () => this.destroyPopup();
+
         root.querySelector("#swis-close").addEventListener("click", close);
         root.querySelector("#swis-cancel").addEventListener("click", close);
         root.querySelector("#swis-overlay").addEventListener("click", (ev) => {
@@ -299,10 +328,12 @@ export class SaleWorkshopInputSelector extends Component {
         const updateSummary = () => {
             const count = st.pendingIds.size;
             let total = 0;
+
             for (const lotId of st.pendingIds) {
                 const qty = parseFloat(st.pendingBreakdown[String(lotId)] || 0);
                 total += qty || 0;
             }
+
             root.querySelector("#swis-count").textContent = String(count);
             root.querySelector("#swis-total").textContent = this.fmt(total);
         };
@@ -336,9 +367,11 @@ export class SaleWorkshopInputSelector extends Component {
             }
 
             let rows = "";
+
             for (const q of st.items) {
                 const lotId = q.lot_id ? q.lot_id[0] : 0;
                 const lotName = q.lot_id ? q.lot_id[1] : "";
+
                 if (!lotId) {
                     continue;
                 }
@@ -367,9 +400,10 @@ export class SaleWorkshopInputSelector extends Component {
                         <td>${this._escapeHtml(q.x_color || "-")}</td>
                         <td class="swis-location">${this._escapeHtml(loc)}</td>
                         <td class="text-end">
-                            ${isPartial
-                                ? `<input class="swis-qty-input" type="number" step="0.01" min="0" max="${qtyAvailable}" data-lot-id="${lotId}" value="${qtyValue || 0}"/>`
-                                : `<span class="swis-fixed-qty">${this.fmt(qtyAvailable)}</span>`
+                            ${
+                                isPartial
+                                    ? `<input class="swis-qty-input" type="number" step="0.01" min="0" max="${qtyAvailable}" data-lot-id="${lotId}" value="${qtyValue || 0}"/>`
+                                    : `<span class="swis-fixed-qty">${this.fmt(qtyAvailable)}</span>`
                             }
                         </td>
                     </tr>
@@ -429,13 +463,16 @@ export class SaleWorkshopInputSelector extends Component {
                     const lotId = parseInt(ev.target.dataset.lotId, 10);
                     const max = parseFloat(ev.target.max || 0);
                     let val = parseFloat(ev.target.value || 0);
+
                     if (val < 0) {
                         val = 0;
                     }
+
                     if (max && val > max) {
                         val = max;
                         ev.target.value = val;
                     }
+
                     if (val > 0) {
                         st.pendingIds.add(lotId);
                         st.pendingBreakdown[String(lotId)] = val;
@@ -443,6 +480,7 @@ export class SaleWorkshopInputSelector extends Component {
                         st.pendingIds.delete(lotId);
                         delete st.pendingBreakdown[String(lotId)];
                     }
+
                     updateSummary();
                 });
             });
@@ -453,6 +491,7 @@ export class SaleWorkshopInputSelector extends Component {
         const load = async (page = 0) => {
             st.isLoading = true;
             render();
+
             try {
                 const result = await this.orm.call(
                     "stock.quant",
@@ -466,12 +505,16 @@ export class SaleWorkshopInputSelector extends Component {
                         page_size: PAGE_SIZE,
                     }
                 );
+
                 st.items = result?.items || [];
                 st.total = result?.total || 0;
                 st.page = page;
             } catch (error) {
                 console.error("[SWIS] Error buscando inventario:", error);
-                this.notification.add(error.message || "No se pudo cargar el inventario base.", { type: "danger" });
+                this.notification.add(
+                    error.message || "No se pudo cargar el inventario base.",
+                    { type: "danger" }
+                );
                 st.items = [];
                 st.total = 0;
             } finally {
@@ -482,6 +525,7 @@ export class SaleWorkshopInputSelector extends Component {
 
         const confirm = async () => {
             const lineId = this._getRecordId();
+
             if (!lineId) {
                 this._warn("Guarda la línea antes de seleccionar placas base.");
                 return;
@@ -497,15 +541,21 @@ export class SaleWorkshopInputSelector extends Component {
                         breakdown: st.pendingBreakdown,
                     }
                 );
+
                 this.state.data = result;
                 this.state.selectedCount = result?.selected_count || 0;
                 this.state.selectedQty = result?.selected_qty || 0;
+
                 this.notification.add("Placas base actualizadas.", { type: "success" });
+
                 this.destroyPopup();
                 await this.loadLineData();
             } catch (error) {
                 console.error("[SWIS] Error confirmando selección:", error);
-                this.notification.add(error.message || "No se pudo guardar la selección.", { type: "danger" });
+                this.notification.add(
+                    error.message || "No se pudo guardar la selección.",
+                    { type: "danger" }
+                );
             }
         };
 
@@ -521,16 +571,21 @@ export class SaleWorkshopInputSelector extends Component {
 
         const bindFilter = (id, key) => {
             const el = root.querySelector(id);
+
             if (!el) {
                 return;
             }
+
             el.addEventListener("input", () => {
                 st.filters[key] = el.value || "";
+
                 if (this._searchTimeout) {
                     clearTimeout(this._searchTimeout);
                 }
+
                 this._searchTimeout = setTimeout(() => load(0), 350);
             });
+
             el.addEventListener("change", () => {
                 st.filters[key] = el.value || "";
                 load(0);
@@ -548,7 +603,9 @@ export class SaleWorkshopInputSelector extends Component {
     }
 }
 
-registry.category("fields").add("sale_workshop_input_selector", {
+export const saleWorkshopInputSelectorField = {
     component: SaleWorkshopInputSelector,
     supportedTypes: ["boolean"],
-});
+};
+
+registry.category("fields").add("sale_workshop_input_selector", saleWorkshopInputSelectorField);
