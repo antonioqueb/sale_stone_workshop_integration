@@ -7,12 +7,16 @@
         <field name="priority">120</field>
         <field name="arch" type="xml">
 
+            <!-- ========================================================= -->
+            <!-- Header: acciones de taller desde la orden de venta         -->
+            <!-- ========================================================= -->
             <xpath expr="//header" position="inside">
                 <button name="action_create_stone_workshop_orders"
                         string="Crear OT taller"
                         type="object"
                         class="btn-secondary"
                         invisible="state not in ('sale', 'done')"/>
+
                 <button name="action_sync_workshop_input_selections"
                         string="Sincronizar placas taller"
                         type="object"
@@ -20,6 +24,9 @@
                         invisible="state not in ('sale', 'done') or stone_workshop_input_selection_count == 0"/>
             </xpath>
 
+            <!-- ========================================================= -->
+            <!-- Smart button: órdenes de taller relacionadas               -->
+            <!-- ========================================================= -->
             <xpath expr="//div[@name='button_box']" position="inside">
                 <button name="action_view_stone_workshop_orders"
                         type="object"
@@ -32,7 +39,16 @@
                 </button>
             </xpath>
 
-            <xpath expr="//field[@name='order_line']/list/field[@name='product_id']" position="after">
+            <!-- ========================================================= -->
+            <!-- Líneas de venta: integración taller                        -->
+            <!-- IMPORTANTE:
+                 Se inserta directamente dentro del list de order_line.
+                 No depende de product_id/product_template_id.
+                 El selector de placas base NO debe ser optional,
+                 porque si el usuario ocultó columnas, el botón desaparece.
+            ========================================================== -->
+            <xpath expr="//field[@name='order_line']/list" position="inside">
+
                 <field name="stone_workshop_required"
                        string="Requiere taller"
                        widget="boolean_toggle"
@@ -50,7 +66,7 @@
                 <field name="stone_workshop_input_selector_anchor"
                        string="Placas base"
                        widget="sale_workshop_input_selector"
-                       optional="show"/>
+                       readonly="1"/>
 
                 <field name="stone_workshop_input_selection_count"
                        string="# Base"
@@ -75,6 +91,7 @@
                        optional="show"
                        readonly="1"/>
 
+                <!-- Campos técnicos requeridos para lógica, dominios y defaults -->
                 <field name="stone_workshop_auto_create" column_invisible="True"/>
                 <field name="stone_workshop_operation_mode" column_invisible="True"/>
                 <field name="stone_workshop_trigger" column_invisible="True"/>
@@ -83,9 +100,14 @@
                 <field name="stone_is_workshop_service_line" column_invisible="True"/>
                 <field name="stone_workshop_parent_line_id" column_invisible="True"/>
                 <field name="stone_workshop_hide_from_customer" column_invisible="True"/>
+
             </xpath>
 
+            <!-- ========================================================= -->
+            <!-- Pestañas de seguimiento de taller                          -->
+            <!-- ========================================================= -->
             <xpath expr="//notebook" position="inside">
+
                 <page string="Taller"
                       name="stone_workshop_orders"
                       invisible="stone_workshop_order_count == 0">
@@ -111,6 +133,7 @@
                             <field name="area_out_total"/>
                             <field name="sale_workshop_reserved" widget="boolean_toggle"/>
                             <field name="state" widget="badge"/>
+
                         </list>
                     </field>
                 </page>
@@ -135,6 +158,7 @@
                     <field name="stone_workshop_input_selection_ids" readonly="1">
                         <list decoration-success="state in ('reserved', 'moved_to_workshop')"
                               decoration-muted="state == 'cancelled'">
+
                             <field name="sale_line_id"/>
                             <field name="product_final_id"/>
                             <field name="base_product_id"/>
@@ -148,9 +172,11 @@
                             <field name="workshop_input_line_id"/>
                             <field name="consume_picking_id"/>
                             <field name="state" widget="badge"/>
+
                         </list>
                     </field>
                 </page>
+
             </xpath>
 
         </field>
