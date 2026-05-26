@@ -493,12 +493,17 @@ export class SaleWorkshopInputSelector extends Component {
             render();
 
             try {
+                const lineId = this._getRecordId();
+
+                if (!lineId) {
+                    throw new Error("Guarda la línea antes de buscar placas base.");
+                }
+
                 const result = await this.orm.call(
-                    "stock.quant",
-                    "search_stone_inventory_for_so_paginated",
-                    [],
+                    "sale.order.line",
+                    "search_workshop_input_inventory_for_selector",
+                    [[lineId]],
                     {
-                        product_id: data.base_product_id,
                         filters: st.filters,
                         current_lot_ids: Array.from(st.pendingIds),
                         page,

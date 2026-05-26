@@ -86,8 +86,10 @@ class WorkshopOrder(models.Model):
 
     def action_view_sale_order(self):
         self.ensure_one()
+
         if not self.sale_order_id:
             raise UserError(_('Esta orden de taller no está vinculada a una venta.'))
+
         return {
             'type': 'ir.actions.act_window',
             'name': _('Orden de Venta'),
@@ -99,8 +101,10 @@ class WorkshopOrder(models.Model):
 
     def action_view_sale_workshop_reservation(self):
         self.ensure_one()
+
         if not self.sale_workshop_reservation_picking_id:
             raise UserError(_('No hay reserva de placas base para esta orden.'))
+
         return {
             'type': 'ir.actions.act_window',
             'name': _('Reserva de Placas Base'),
@@ -121,9 +125,11 @@ class WorkshopOrder(models.Model):
         return True
 
     def action_assign_outputs_to_sale(self):
-        assigned = self._sale_workshop_assign_outputs_to_sale()
+        assigned = self._sale_workshop_assign_outputs_to_sale(manual=True)
+
         if not assigned:
             raise UserError(_('No se encontraron salidas finales recibidas para asignar a la línea de venta.'))
+
         return True
 
     # ------------------------------------------------------------------
@@ -132,35 +138,42 @@ class WorkshopOrder(models.Model):
 
     def _sale_workshop_move_line_qty_vals(self, qty):
         StockMoveLine = self.env['stock.move.line']
+
         if 'quantity' in StockMoveLine._fields:
             return {'quantity': qty}
         if 'reserved_uom_qty' in StockMoveLine._fields:
             return {'reserved_uom_qty': qty}
         if 'qty_done' in StockMoveLine._fields:
             return {'qty_done': qty}
+
         return {}
 
     def _sale_workshop_move_qty_vals(self, product, qty):
         StockMove = self.env['stock.move']
         vals = {}
+
         if 'product_uom_qty' in StockMove._fields:
             vals['product_uom_qty'] = qty
         elif 'quantity' in StockMove._fields:
             vals['quantity'] = qty
+
         if 'product_uom_id' in StockMove._fields:
             vals['product_uom_id'] = product.uom_id.id
         elif 'product_uom' in StockMove._fields:
             vals['product_uom'] = product.uom_id.id
+
         return vals
 
     def _sale_workshop_input_lines_to_reserve(self):
         self.ensure_one()
+
         return self.input_line_ids.filtered(
-            lambda l: l.state != 'cancelled'
-            and not l.is_consumed
-            and l.product_id
-            and l.lot_id
-            and (l.qty_in or 0.0) > 0.0
+            lambda l:
+                l.state != 'cancelled'
+                and not l.is_consumed
+                and l.product_id
+                and l.lot_id
+                and (l.qty_in or 0.0) > 0.0
         )
 
     def _sale_workshop_sync_selection_states(self):
@@ -171,6 +184,7 @@ class WorkshopOrder(models.Model):
 
     def _sale_workshop_cancel_input_reservation(self, reset_lines=False):
         self.ensure_one()
+
         picking = self.sale_workshop_reservation_picking_id
         if not picking:
             return True
@@ -192,6 +206,7 @@ class WorkshopOrder(models.Model):
                 'state': 'pending',
                 'consume_picking_id': False,
             })
+
             self.write({'sale_workshop_reservation_picking_id': False})
             self._sale_workshop_sync_selection_states()
 
@@ -199,6 +214,7 @@ class WorkshopOrder(models.Model):
 
     def _sale_workshop_create_reservation_picking(self, input_lines):
         self.ensure_one()
+
         if not input_lines:
             return False
 
@@ -223,6 +239,7 @@ class WorkshopOrder(models.Model):
 
         moves = self.env['stock.move']
         move_specs = []
+
         StockMove = self.env['stock.move']
         StockMoveLine = self.env['stock.move.line']
 
@@ -255,7 +272,6 @@ class WorkshopOrder(models.Model):
                 moves.with_context(skip_whole_lot=True)._action_confirm()
 
         for move, line, source_location in move_specs:
-            # Evitar líneas autoasignadas por reglas externas y forzar el lote exacto.
             move.move_line_ids.unlink()
 
             ml_vals = {
@@ -292,7 +308,10 @@ class WorkshopOrder(models.Model):
         })
 
         self._sale_workshop_sync_selection_states()
-        self.message_post(body=_('Se reservaron placas base para venta en el picking %s.') % picking.name)
+
+        self.message_post(
+            body=_('Se reservaron placas base para venta en el picking %s.') % picking.name
+        )
 
         return picking
 
@@ -326,10 +345,10 @@ class WorkshopOrder(models.Model):
 
     def _sale_workshop_reserved_qty_for_lot(self, product, lot, location=False):
         """
-        Cantidad reservada por el picking interno de ESTA MISMA OT.
+        Cantidad reservada por el picking interno de esta misma OT.
 
-        Esta cantidad debe considerarse disponible para la OT porque ya fue
-        apartada precisamente para enviarse a taller.
+        Esta cantidad cuenta como disponible para esta OT porque ya fue apartada
+        precisamente para enviarse a taller.
         """
         self.ensure_one()
 
@@ -348,7 +367,9 @@ class WorkshopOrder(models.Model):
         qty = 0.0
 
         for ml in picking.move_ids.move_line_ids.filtered(
-            lambda l: l.product_id == product and l.lot_id == lot
+            lambda l:
+                l.product_id == product
+                and l.lot_id == lot
         ):
             if location_ids and ml.location_id.id not in location_ids:
                 continue
@@ -491,11 +512,12 @@ class WorkshopOrder(models.Model):
         self.ensure_one()
 
         input_lines = self.input_line_ids.filtered(
-            lambda l: l.state != 'cancelled'
-            and not l.is_consumed
-            and l.product_id
-            and l.lot_id
-            and (l.qty_in or 0.0) > 0.0
+            lambda l:
+                l.state != 'cancelled'
+                and not l.is_consumed
+                and l.product_id
+                and l.lot_id
+                and (l.qty_in or 0.0) > 0.0
         )
 
         if not input_lines:
@@ -518,17 +540,8 @@ class WorkshopOrder(models.Model):
 
     def _validate_business_rules(self):
         """
-        Evita falso negativo de stock cuando el material ya fue reservado por
-        el picking interno de esta misma OT.
-
-        El validador base puede ver:
-            total = 4.86
-            reserved = 4.86
-            free = 0.0
-
-        Pero si reserved pertenece al picking de reserva de esta OT, entonces
-        para esta OT el disponible efectivo es:
-            free + own_reserved = 4.86
+        Evita falso negativo cuando el material ya está reservado por el picking
+        interno de esta misma OT.
         """
         try:
             return super()._validate_business_rules()
@@ -618,12 +631,12 @@ class WorkshopOrder(models.Model):
 
     def action_receive_outputs(self):
         res = super().action_receive_outputs()
-        self._sale_workshop_assign_outputs_to_sale()
+        self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 
     def action_done(self):
         res = super().action_done()
-        self._sale_workshop_assign_outputs_to_sale()
+        self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 
     def action_cancel(self):
@@ -639,7 +652,31 @@ class WorkshopOrder(models.Model):
 
         return super().action_cancel()
 
-    def _sale_workshop_assign_outputs_to_sale(self):
+    def _sale_workshop_get_sale_line_rounding(self, sale_line):
+        if hasattr(sale_line, '_stone_workshop_get_line_uom'):
+            uom = sale_line._stone_workshop_get_line_uom()
+            if uom and uom.rounding:
+                return uom.rounding
+
+        if sale_line.product_id and sale_line.product_id.uom_id and sale_line.product_id.uom_id.rounding:
+            return sale_line.product_id.uom_id.rounding
+
+        return 0.00001
+
+    def _sale_workshop_assign_outputs_to_sale(self, manual=False):
+        """
+        Asigna lotes finales a la línea de venta de forma idempotente.
+
+        Antes se hacía:
+            breakdown[lot] = breakdown.get(lot, 0) + qty_out
+
+        Eso duplicaba cantidades si action_receive_outputs y luego
+        action_assign_outputs_to_sale se ejecutaban sobre las mismas salidas.
+
+        Ahora para los lotes producidos por la OT se fija el valor real
+        producido por lote:
+            breakdown[lot] = sum(qty_out de esa OT y ese lote)
+        """
         assigned_any = False
 
         for order in self:
@@ -649,11 +686,12 @@ class WorkshopOrder(models.Model):
                 continue
 
             output_lines = order.output_line_ids.filtered(
-                lambda o: o.state in ('produced', 'received')
-                and o.output_type not in ('scrap', 'rejected')
-                and o.product_id == sale_line.product_id
-                and o.lot_id
-                and (o.qty_out or 0.0) > 0.0
+                lambda o:
+                    o.state in ('produced', 'received')
+                    and o.output_type not in ('scrap', 'rejected')
+                    and o.product_id == sale_line.product_id
+                    and o.lot_id
+                    and (o.qty_out or 0.0) > 0.0
             )
 
             if not output_lines:
@@ -661,27 +699,49 @@ class WorkshopOrder(models.Model):
 
             current_lot_ids = set(sale_line.lot_ids.ids) if hasattr(sale_line, 'lot_ids') else set()
             output_lot_ids = set(output_lines.mapped('lot_id').ids)
-            lot_ids = list(current_lot_ids | output_lot_ids)
+            target_lot_ids = list(current_lot_ids | output_lot_ids)
 
-            breakdown = (
-                sale_line._stone_workshop_parse_breakdown()
-                if hasattr(sale_line, '_stone_workshop_parse_breakdown')
-                else {}
-            )
-
+            output_qty_by_lot = {}
             for output in output_lines:
                 key = str(output.lot_id.id)
-                breakdown[key] = breakdown.get(key, 0.0) + (output.qty_out or 0.0)
+                output_qty_by_lot[key] = output_qty_by_lot.get(key, 0.0) + (output.qty_out or 0.0)
 
             vals = {}
+            needs_write = False
 
-            if 'lot_ids' in sale_line._fields:
-                vals['lot_ids'] = [(6, 0, lot_ids)]
+            if 'lot_ids' in sale_line._fields and output_lot_ids - current_lot_ids:
+                vals['lot_ids'] = [(6, 0, target_lot_ids)]
+                needs_write = True
 
             if 'x_lot_breakdown_json' in sale_line._fields:
-                vals['x_lot_breakdown_json'] = breakdown
+                current_breakdown = (
+                    sale_line._stone_workshop_parse_breakdown()
+                    if hasattr(sale_line, '_stone_workshop_parse_breakdown')
+                    else {}
+                )
+                new_breakdown = dict(current_breakdown or {})
+                rounding = order._sale_workshop_get_sale_line_rounding(sale_line)
 
-            if vals:
+                breakdown_changed = False
+
+                for key, qty in output_qty_by_lot.items():
+                    current_qty = float(current_breakdown.get(key, 0.0) or 0.0)
+                    target_qty = float(qty or 0.0)
+
+                    if float_compare(
+                        current_qty,
+                        target_qty,
+                        precision_rounding=rounding,
+                    ) != 0:
+                        breakdown_changed = True
+
+                    new_breakdown[key] = target_qty
+
+                if breakdown_changed:
+                    vals['x_lot_breakdown_json'] = new_breakdown
+                    needs_write = True
+
+            if needs_write and vals:
                 sale_line.with_context(
                     skip_stone_workshop_product_defaults=True,
                     skip_sale_workshop_reservation=True,
@@ -689,8 +749,6 @@ class WorkshopOrder(models.Model):
 
                 if hasattr(sale_line, '_sync_lots_to_picking_moves'):
                     sale_line._sync_lots_to_picking_moves()
-
-                assigned_any = True
 
                 order.message_post(body=_(
                     'Se asignaron %(count)s lote(s) finales al pedido %(sale)s.'
@@ -707,6 +765,16 @@ class WorkshopOrder(models.Model):
                     'line': sale_line.product_id.display_name,
                     'lots': ', '.join(output_lines.mapped('lot_id.name')),
                 })
+
+                assigned_any = True
+            else:
+                # Ya estaba correctamente asignado. No duplicar cantidades ni mensajes.
+                assigned_any = True
+                _logger.info(
+                    '[STONE WORKSHOP SALE] Salidas de %s ya estaban asignadas a la línea %s. Sin cambios.',
+                    order.name,
+                    sale_line.id,
+                )
 
         return assigned_any
 
@@ -734,10 +802,6 @@ class WorkshopInputLine(models.Model):
     )
 
     def _check_stock_availability(self):
-        """
-        Valida stock considerando la reserva propia de órdenes de taller
-        originadas desde venta.
-        """
         sale_linked_lines = self.filtered(
             lambda l:
                 l.order_id

@@ -6,7 +6,11 @@ from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 from odoo.tools.float_utils import float_compare
 
-from .product import WORKSHOP_OPERATION_MODE_SELECTION, WORKSHOP_TRIGGER_SELECTION, WORKSHOP_COMMERCIAL_MODE_SELECTION
+from .product import (
+    WORKSHOP_OPERATION_MODE_SELECTION,
+    WORKSHOP_TRIGGER_SELECTION,
+    WORKSHOP_COMMERCIAL_MODE_SELECTION,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -82,6 +86,7 @@ class SaleOrderLine(models.Model):
         ('assigned', 'Producto final asignado'),
         ('cancelled', 'Cancelado'),
     ], string='Asignación taller', compute='_compute_stone_workshop_status', store=True)
+
     stone_workshop_input_lot_ids = fields.Many2many(
         'stock.lot',
         'sale_line_workshop_input_lot_rel',
@@ -160,6 +165,7 @@ class SaleOrderLine(models.Model):
     def _compute_stone_workshop_status(self):
         for line in self:
             order = line.stone_workshop_order_id
+
             if not line.stone_workshop_required:
                 line.stone_workshop_assignment_state = 'none'
                 continue
@@ -171,16 +177,19 @@ class SaleOrderLine(models.Model):
             if not order:
                 line.stone_workshop_assignment_state = 'reserved_inputs' if active_selections else 'pending_inputs'
                 continue
+
             if order.state == 'cancel':
                 line.stone_workshop_assignment_state = 'cancelled'
                 continue
 
             input_lines = order.input_line_ids.filtered(lambda l: l.state != 'cancelled')
             output_lines = order.output_line_ids.filtered(lambda l: l.state != 'cancelled')
+
             final_output_lots = output_lines.filtered(
-                lambda o: o.output_type not in ('scrap', 'rejected')
-                and o.product_id == line.product_id
-                and o.lot_id
+                lambda o:
+                    o.output_type not in ('scrap', 'rejected')
+                    and o.product_id == line.product_id
+                    and o.lot_id
             ).mapped('lot_id')
 
             if final_output_lots and set(final_output_lots.ids).issubset(set(line.lot_ids.ids)):
@@ -213,9 +222,10 @@ class SaleOrderLine(models.Model):
                     lambda l: l.state != 'cancelled' and l.lot_id
                 ).mapped('lot_id')
                 output_lots = order.output_line_ids.filtered(
-                    lambda l: l.state != 'cancelled'
-                    and l.output_type not in ('scrap', 'rejected')
-                    and l.lot_id
+                    lambda l:
+                        l.state != 'cancelled'
+                        and l.output_type not in ('scrap', 'rejected')
+                        and l.lot_id
                 ).mapped('lot_id')
 
             if not input_lots:
@@ -372,7 +382,6 @@ class SaleOrderLine(models.Model):
         return max(qty, 0.0)
 
     def _stone_workshop_get_line_uom(self):
-        """Obtiene la unidad de medida de la línea de forma compatible con Odoo 19."""
         self.ensure_one()
 
         for field_name in ('product_uom_id', 'product_uom'):
@@ -463,13 +472,16 @@ class SaleOrderLine(models.Model):
         result = {}
         if not breakdown:
             return result
+
         if isinstance(breakdown, str):
             try:
                 breakdown = json.loads(breakdown)
             except (json.JSONDecodeError, TypeError):
                 breakdown = {}
+
         if not isinstance(breakdown, dict):
             return result
+
         for key, value in breakdown.items():
             try:
                 lot_id = int(key)
@@ -478,6 +490,7 @@ class SaleOrderLine(models.Model):
                 continue
             if lot_id and qty > 0:
                 result[lot_id] = qty
+
         return result
 
     def _stone_workshop_prepare_selection_vals_from_lots(self, lot_ids, breakdown=None):
@@ -501,14 +514,12 @@ class SaleOrderLine(models.Model):
             lot_id = vals.get('lot_id')
             if isinstance(lot_id, (list, tuple)):
                 lot_id = lot_id[0] if lot_id else False
+
             try:
                 lot_id = int(lot_id or 0)
             except (TypeError, ValueError):
                 lot_id = 0
 
-            # prepare_input_line_vals_from_lots() devuelve valores para
-            # workshop.input.line. La selección en venta usa base_product_id
-            # para evitar colisión semántica con el producto final vendido.
             vals.pop('product_id', None)
 
             manual_qty = breakdown.get(lot_id)
@@ -538,9 +549,20 @@ class SaleOrderLine(models.Model):
             return True
 
         current_lot_ids = set(self._stone_workshop_active_input_selections().mapped('lot_id').ids)
-        committed_lot_ids = set(self.env['stock.quant']._get_committed_lot_ids(
-            self.stone_workshop_base_product_id.id
-        ))
+
+        if self.stone_workshop_order_id:
+            current_lot_ids.update(
+                self.stone_workshop_order_id.input_line_ids.filtered(
+                    lambda l: l.state != 'cancelled' and l.lot_id
+                ).mapped('lot_id').ids
+            )
+
+        committed_lot_ids = set(
+            self.env['stock.quant']._get_committed_lot_ids(
+                self.stone_workshop_base_product_id.id
+            )
+        )
+
         conflict_ids = target_lot_ids & (committed_lot_ids - current_lot_ids)
 
         if conflict_ids:
@@ -556,6 +578,7 @@ class SaleOrderLine(models.Model):
 
         selections = self._stone_workshop_active_input_selections()
         selected_lot_ids = selections.mapped('lot_id').ids
+
         breakdown = {
             str(selection.lot_id.id): selection.qty_in
             for selection in selections
@@ -628,6 +651,7 @@ class SaleOrderLine(models.Model):
             safe_lot_ids,
             breakdown=breakdown,
         )
+
         vals_by_lot = {}
         for vals in vals_list:
             lot_id = vals.get('lot_id')
@@ -641,6 +665,7 @@ class SaleOrderLine(models.Model):
             input_line = selection.workshop_input_line_id
             if input_line and input_line.exists() and not input_line.is_consumed:
                 input_line.unlink()
+
             selection.write({
                 'state': 'cancelled',
                 'workshop_input_line_id': False,
@@ -708,7 +733,298 @@ class SaleOrderLine(models.Model):
             workshop._sale_workshop_refresh_input_reservation()
 
         active_selections._sync_state_from_workshop_input()
+
         return True
+
+    # -------------------------------------------------------------------------
+    # Inventario para selector de producto base de taller
+    # -------------------------------------------------------------------------
+
+    def _swis_safe_float(self, value, default=0.0):
+        try:
+            if value in (False, None, ''):
+                return default
+            if isinstance(value, str):
+                value = value.replace(',', '.')
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _swis_get_first_value(self, records, field_names, default=False):
+        for record in records:
+            if not record or not record.exists():
+                continue
+
+            for field_name in field_names:
+                if field_name not in record._fields:
+                    continue
+
+                value = record[field_name]
+                if not value:
+                    continue
+
+                field = record._fields[field_name]
+                if field.type == 'many2one':
+                    return value.display_name if value else default
+
+                return value
+
+        return default
+
+    def _swis_normalize_material_type(self, value):
+        value = (value or '').strip().lower()
+
+        if value in ('slab', 'placa', 'plate'):
+            return 'placa'
+        if value in ('format', 'formato'):
+            return 'formato'
+        if value in ('piece', 'pieza'):
+            return 'pieza'
+        if value in ('remnant', 'retazo', 'sobrante'):
+            return 'retazo'
+
+        return value or 'placa'
+
+    def _swis_text_match(self, value, expected):
+        if not expected:
+            return True
+
+        value = (value or '').strip().lower()
+        expected = (expected or '').strip().lower()
+
+        return expected in value
+
+    def _swis_own_reserved_qty_for_lot(self, product, lot, location=False):
+        self.ensure_one()
+
+        workshop = self.stone_workshop_order_id
+        if not workshop or not hasattr(workshop, '_sale_workshop_reserved_qty_for_lot'):
+            return 0.0
+
+        return workshop._sale_workshop_reserved_qty_for_lot(
+            product,
+            lot,
+            location=location,
+        )
+
+    def search_workshop_input_inventory_for_selector(
+        self,
+        filters=None,
+        current_lot_ids=None,
+        page=0,
+        page_size=35,
+    ):
+        """
+        Buscador dedicado para placas base de taller.
+
+        No reutiliza search_stone_inventory_for_so_paginated porque ese método
+        pertenece a la selección comercial del producto vendido. Aquí se busca
+        el producto base configurado en stone_workshop_base_product_id.
+        """
+        self.ensure_one()
+
+        filters = filters or {}
+        current_lot_ids = set(self._stone_workshop_safe_int_list(current_lot_ids or []))
+        page = int(page or 0)
+        page_size = int(page_size or 35)
+
+        if page < 0:
+            page = 0
+        if page_size <= 0:
+            page_size = 35
+
+        if not self.stone_workshop_required:
+            return {
+                'items': [],
+                'total': 0,
+                'page': page,
+                'page_size': page_size,
+                'message': 'La línea no requiere taller.',
+            }
+
+        base_product = self.stone_workshop_base_product_id
+        if not base_product:
+            return {
+                'items': [],
+                'total': 0,
+                'page': page,
+                'page_size': page_size,
+                'message': 'La línea no tiene producto base configurado.',
+            }
+
+        Quant = self.env['stock.quant'].sudo()
+
+        warehouse = self.order_id.warehouse_id if self.order_id else False
+        warehouse_location = warehouse.lot_stock_id if warehouse and warehouse.lot_stock_id else False
+
+        domain = [
+            ('product_id', '=', base_product.id),
+            ('lot_id', '!=', False),
+            ('location_id.usage', '=', 'internal'),
+            ('quantity', '>', 0),
+        ]
+
+        if warehouse_location:
+            domain.append(('location_id', 'child_of', warehouse_location.id))
+
+        lot_name = (filters.get('lot_name') or '').strip()
+        if lot_name:
+            domain.append(('lot_id.name', 'ilike', lot_name))
+
+        current_selection_lot_ids = set(
+            self._stone_workshop_active_input_selections().mapped('lot_id').ids
+        )
+
+        current_workshop_lot_ids = set()
+        if self.stone_workshop_order_id:
+            current_workshop_lot_ids = set(
+                self.stone_workshop_order_id.input_line_ids.filtered(
+                    lambda l: l.state != 'cancelled' and l.lot_id
+                ).mapped('lot_id').ids
+            )
+
+        allowed_current_lot_ids = current_lot_ids | current_selection_lot_ids | current_workshop_lot_ids
+
+        committed_lot_ids = set(Quant._get_committed_lot_ids(base_product.id))
+        committed_lot_ids -= allowed_current_lot_ids
+
+        quants = Quant.search(domain, order='lot_id, location_id')
+        lot_map = {}
+
+        for quant in quants:
+            lot = quant.lot_id
+
+            if not lot:
+                continue
+
+            if lot.id in committed_lot_ids:
+                continue
+
+            reserved_qty = quant.reserved_quantity if 'reserved_quantity' in quant._fields else 0.0
+            free_qty = (quant.quantity or 0.0) - (reserved_qty or 0.0)
+
+            own_reserved_qty = 0.0
+            if lot.id in allowed_current_lot_ids:
+                own_reserved_qty = self._swis_own_reserved_qty_for_lot(
+                    base_product,
+                    lot,
+                    location=quant.location_id,
+                )
+
+            effective_qty = free_qty + own_reserved_qty
+
+            if effective_qty <= 0 and lot.id not in allowed_current_lot_ids:
+                continue
+
+            if lot.id not in lot_map:
+                tipo = self._swis_get_first_value(
+                    [quant, lot],
+                    ['x_tipo', 'material_type', 'stone_material_type', 'tipo_material'],
+                    default='placa',
+                )
+                tipo = self._swis_normalize_material_type(tipo)
+
+                alto = self._swis_safe_float(self._swis_get_first_value(
+                    [quant, lot],
+                    ['x_alto', 'alto', 'height_cm', 'marble_height', 'height'],
+                    default=0.0,
+                ))
+                ancho = self._swis_safe_float(self._swis_get_first_value(
+                    [quant, lot],
+                    ['x_ancho', 'ancho', 'width_cm', 'marble_width', 'width'],
+                    default=0.0,
+                ))
+
+                lot_map[lot.id] = {
+                    'id': quant.id,
+                    'lot_id': [lot.id, lot.name or lot.display_name],
+                    'location_id': [
+                        quant.location_id.id,
+                        quant.location_id.display_name or quant.location_id.name or '',
+                    ],
+                    'quantity': 0.0,
+                    'x_bloque': self._swis_get_first_value(
+                        [quant, lot],
+                        ['x_bloque', 'bloque', 'block_name', 'lot_general'],
+                        default='',
+                    ),
+                    'x_atado': self._swis_get_first_value(
+                        [quant, lot],
+                        ['x_atado', 'atado', 'bundle_name'],
+                        default='',
+                    ),
+                    'x_alto': alto,
+                    'x_ancho': ancho,
+                    'x_tipo': tipo,
+                    'x_color': self._swis_get_first_value(
+                        [quant, lot],
+                        ['x_color', 'color', 'tone', 'tono'],
+                        default='',
+                    ),
+                    'reserved_by_this_workshop': 0.0,
+                    'free_qty': 0.0,
+                }
+
+            lot_map[lot.id]['quantity'] += max(effective_qty, 0.0)
+            lot_map[lot.id]['reserved_by_this_workshop'] += max(own_reserved_qty, 0.0)
+            lot_map[lot.id]['free_qty'] += max(free_qty, 0.0)
+
+        items = list(lot_map.values())
+
+        bloque = (filters.get('bloque') or '').strip()
+        atado = (filters.get('atado') or '').strip()
+        tipo_raw = (filters.get('tipo') or '').strip()
+        tipo_filter = self._swis_normalize_material_type(tipo_raw)
+        alto_min = self._swis_safe_float(filters.get('alto_min'))
+        ancho_min = self._swis_safe_float(filters.get('ancho_min'))
+
+        filtered_items = []
+
+        for item in items:
+            if bloque and not self._swis_text_match(item.get('x_bloque'), bloque):
+                continue
+            if atado and not self._swis_text_match(item.get('x_atado'), atado):
+                continue
+            if tipo_raw and item.get('x_tipo') != tipo_filter:
+                continue
+            if alto_min and self._swis_safe_float(item.get('x_alto')) < alto_min:
+                continue
+            if ancho_min and self._swis_safe_float(item.get('x_ancho')) < ancho_min:
+                continue
+
+            filtered_items.append(item)
+
+        filtered_items.sort(key=lambda x: (x.get('lot_id') or [0, ''])[1] or '')
+
+        total = len(filtered_items)
+        start = page * page_size
+        end = start + page_size
+        paged_items = filtered_items[start:end]
+
+        _logger.info(
+            '[SWIS INVENTORY] sale_line=%s sale=%s base_product=%s quants=%s total=%s got=%s committed=%s allowed_current=%s',
+            self.id,
+            self.order_id.name if self.order_id else '',
+            base_product.id,
+            len(quants),
+            total,
+            len(paged_items),
+            len(committed_lot_ids),
+            list(allowed_current_lot_ids),
+        )
+
+        return {
+            'items': paged_items,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'product_id': base_product.id,
+            'product_name': base_product.display_name,
+        }
+
+    # -------------------------------------------------------------------------
+    # Acciones
+    # -------------------------------------------------------------------------
 
     def action_view_stone_workshop_order(self):
         self.ensure_one()

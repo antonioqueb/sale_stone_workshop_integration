@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Sale Stone Workshop Integration',
-    'version': '19.0.1.2.0',
+    'version': '19.0.1.3.0',
     'category': 'Sales/Manufacturing',
     'summary': 'Integra venta, selección de placas, taller y entregas para transformar producto base en producto final',
     'description': """
@@ -34,9 +34,9 @@
     ],
     'assets': {
         'web.assets_backend': [
-            'sale_stone_workshop_integration/static/src/scss/workshop_input_selector.scss',
             'sale_stone_workshop_integration/static/src/components/workshop_input_selector/workshop_input_selector.xml',
             'sale_stone_workshop_integration/static/src/components/workshop_input_selector/workshop_input_selector.js',
+            'sale_stone_workshop_integration/static/src/scss/workshop_input_selector.scss',
         ],
     },
     'installable': True,
