@@ -1,16 +1,20 @@
 /* Sale Stone Workshop Integration — selector visual de placas base */
+/* Compatible con compilador SCSS de Odoo: no usar min()/max() mezclando px con vw/vh */
 
 .swis-field {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    min-width: 100%;
 }
 
 .swis-inline-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     min-height: 26px;
-    padding: 3px 9px;
+    padding: 4px 10px;
     border-radius: 999px;
     border: 1px solid #d1d5db;
     background: #ffffff;
@@ -20,6 +24,7 @@
     line-height: 1;
     white-space: nowrap;
     cursor: pointer;
+    box-shadow: none;
 }
 
 .swis-inline-btn.swis-ready {
@@ -43,6 +48,13 @@
     font-size: 12px;
 }
 
+.swis-text {
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Popup */
+
 .swis-popup-root,
 .swis-overlay {
     position: fixed;
@@ -59,8 +71,10 @@
 }
 
 .swis-popup {
-    width: min(1380px, 96vw);
-    height: min(820px, 92vh);
+    width: 96vw;
+    max-width: 1380px;
+    height: 92vh;
+    max-height: 820px;
     background: #ffffff;
     border-radius: 18px;
     border: 1px solid rgba(17, 24, 39, .12);
@@ -116,6 +130,7 @@
     padding: 5px 10px;
     font-size: 12px;
     font-weight: 800;
+    white-space: nowrap;
 }
 
 .swis-pill-selected {
@@ -140,6 +155,7 @@
     font-weight: 800;
     cursor: pointer;
     line-height: 1;
+    box-shadow: none;
 }
 
 .swis-btn:hover {
@@ -363,7 +379,9 @@
 @media (max-width: 980px) {
     .swis-popup {
         width: 98vw;
+        max-width: none;
         height: 96vh;
+        max-height: none;
         border-radius: 12px;
     }
 
