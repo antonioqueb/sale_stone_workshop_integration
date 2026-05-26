@@ -64,6 +64,12 @@ class WorkshopOrder(models.Model):
         string='Base reservada',
         compute='_compute_sale_workshop_reserved',
     )
+    sale_workshop_input_selection_ids = fields.One2many(
+        'sale.stone.workshop.input.selection',
+        'workshop_order_id',
+        string='Selecciones origen desde venta',
+        readonly=True,
+    )
 
     @api.depends('sale_workshop_reservation_picking_id.state')
     def _compute_sale_workshop_reserved(self):
@@ -154,6 +160,12 @@ class WorkshopOrder(models.Model):
             and (l.qty_in or 0.0) > 0.0
         )
 
+    def _sale_workshop_sync_selection_states(self):
+        selections = self.mapped('sale_workshop_input_selection_ids')
+        if selections:
+            selections._sync_state_from_workshop_input()
+        return True
+
     def _sale_workshop_cancel_input_reservation(self, reset_lines=False):
         self.ensure_one()
         picking = self.sale_workshop_reservation_picking_id
@@ -175,6 +187,7 @@ class WorkshopOrder(models.Model):
                 'consume_picking_id': False,
             })
             self.write({'sale_workshop_reservation_picking_id': False})
+            self._sale_workshop_sync_selection_states()
         return True
 
     def _sale_workshop_create_reservation_picking(self, input_lines):
@@ -256,6 +269,7 @@ class WorkshopOrder(models.Model):
             'state': 'reserved_for_workshop',
             'consume_picking_id': picking.id,
         })
+        self._sale_workshop_sync_selection_states()
         self.message_post(body=_('Se reservaron placas base para venta en el picking %s.') % picking.name)
         return picking
 
@@ -325,6 +339,7 @@ class WorkshopOrder(models.Model):
                 'consume_picking_id': picking.id,
             })
             order.write({'state': 'sent_to_workshop'})
+            order._sale_workshop_sync_selection_states()
             order.message_post(body=_('Material reservado enviado a taller con el picking %s.') % picking.name)
             handled |= order
 
@@ -348,6 +363,9 @@ class WorkshopOrder(models.Model):
             picking = order.sale_workshop_reservation_picking_id
             if picking and picking.state not in ('done', 'cancel'):
                 order._sale_workshop_cancel_input_reservation(reset_lines=True)
+            order.sale_workshop_input_selection_ids.filtered(
+                lambda s: s.state != 'moved_to_workshop'
+            ).write({'state': 'cancelled'})
         return super().action_cancel()
 
     def _sale_workshop_assign_outputs_to_sale(self):
@@ -417,6 +435,12 @@ class WorkshopInputLine(models.Model):
         store=True,
         readonly=True,
     )
+    sale_workshop_input_selection_ids = fields.One2many(
+        'sale.stone.workshop.input.selection',
+        'workshop_input_line_id',
+        string='Selección venta',
+        readonly=True,
+    )
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -433,11 +457,19 @@ class WorkshopInputLine(models.Model):
             and any(key in vals for key in ('lot_id', 'product_id', 'qty_in', 'area_sqm', 'location_id', 'state'))
         ):
             (orders | self.mapped('order_id'))._sale_workshop_refresh_input_reservation()
+        (orders | self.mapped('order_id'))._sale_workshop_sync_selection_states()
         return res
 
     def unlink(self):
         orders = self.mapped('order_id')
+        selections = self.mapped('sale_workshop_input_selection_ids')
         res = super().unlink()
+        if selections:
+            selections.write({
+                'workshop_input_line_id': False,
+                'workshop_order_id': False,
+                'state': 'selected',
+            })
         if not self.env.context.get('skip_sale_workshop_reservation'):
             orders._sale_workshop_refresh_input_reservation()
         return res

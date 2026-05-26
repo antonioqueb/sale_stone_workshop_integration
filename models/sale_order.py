@@ -25,6 +25,22 @@ class SaleOrder(models.Model):
         compute='_compute_stone_workshop_order_count',
     )
 
+    stone_workshop_input_selection_ids = fields.One2many(
+        'sale.stone.workshop.input.selection',
+        'sale_order_id',
+        string='Placas base a consumir',
+        readonly=True,
+    )
+    stone_workshop_input_selection_count = fields.Integer(
+        string='Placas base seleccionadas',
+        compute='_compute_stone_workshop_input_selection_summary',
+    )
+    stone_workshop_input_selection_total_qty = fields.Float(
+        string='Total base seleccionado',
+        compute='_compute_stone_workshop_input_selection_summary',
+        digits=(12, 4),
+    )
+
     @api.depends('stone_workshop_order_ids.state')
     def _compute_stone_workshop_order_count(self):
         for order in self:
@@ -33,6 +49,18 @@ class SaleOrder(models.Model):
             order.stone_workshop_pending_count = len(
                 orders.filtered(lambda o: o.state not in ('done', 'cancel'))
             )
+
+    @api.depends(
+        'stone_workshop_input_selection_ids.state',
+        'stone_workshop_input_selection_ids.qty_in',
+    )
+    def _compute_stone_workshop_input_selection_summary(self):
+        for order in self:
+            selections = order.stone_workshop_input_selection_ids.filtered(
+                lambda s: s.state != 'cancelled'
+            )
+            order.stone_workshop_input_selection_count = len(selections)
+            order.stone_workshop_input_selection_total_qty = sum(selections.mapped('qty_in'))
 
     def action_confirm(self):
         res = super().action_confirm()
@@ -141,15 +169,7 @@ class SaleOrder(models.Model):
         return False
 
     def _stone_workshop_manual_candidate_lines(self):
-        """Líneas candidatas para el botón manual Crear OT taller.
-
-        Este botón debe ignorar el disparador de stock.
-        Si el usuario marcó Requiere taller y configuró producto base/proceso,
-        debe poder crear la OT aunque:
-        - el trigger sea manual,
-        - haya stock final,
-        - stone_workshop_auto_create esté desactivado.
-        """
+        """Líneas candidatas para el botón manual Crear OT taller."""
         SaleLine = self.env['sale.order.line']
         lines = SaleLine
 
@@ -221,6 +241,8 @@ class SaleOrder(models.Model):
                 line.with_context(skip_stone_workshop_product_defaults=True).write({
                     'stone_workshop_order_id': workshop.id,
                 })
+
+                line._stone_workshop_push_input_selections_to_workshop(workshop)
 
                 created_orders |= workshop
 
@@ -302,6 +324,12 @@ class SaleOrder(models.Model):
         if len(self) == 1:
             return self.action_view_stone_workshop_orders()
 
+        return True
+
+    def action_sync_workshop_input_selections(self):
+        for order in self:
+            for line in order.order_line.filtered(lambda l: l.stone_workshop_order_id):
+                line._stone_workshop_push_input_selections_to_workshop(line.stone_workshop_order_id)
         return True
 
     def action_view_stone_workshop_orders(self):

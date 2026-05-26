@@ -13,6 +13,11 @@
                         type="object"
                         class="btn-secondary"
                         invisible="state not in ('sale', 'done')"/>
+                <button name="action_sync_workshop_input_selections"
+                        string="Sincronizar placas taller"
+                        type="object"
+                        class="btn-secondary"
+                        invisible="state not in ('sale', 'done') or stone_workshop_input_selection_count == 0"/>
             </xpath>
 
             <xpath expr="//div[@name='button_box']" position="inside">
@@ -41,6 +46,21 @@
                        decoration-warning="stone_workshop_assignment_state in ('reserved_inputs', 'in_workshop')"
                        decoration-success="stone_workshop_assignment_state == 'assigned'"
                        decoration-muted="stone_workshop_assignment_state in ('none', 'cancelled')"/>
+
+                <field name="stone_workshop_input_selector_anchor"
+                       string="Placas base"
+                       widget="sale_workshop_input_selector"
+                       optional="show"/>
+
+                <field name="stone_workshop_input_selection_count"
+                       string="# Base"
+                       optional="hide"
+                       readonly="1"/>
+
+                <field name="stone_workshop_input_selection_total_qty"
+                       string="M² Base"
+                       optional="hide"
+                       readonly="1"/>
 
                 <field name="stone_workshop_base_product_id"
                        string="Producto base"
@@ -90,6 +110,43 @@
                             <field name="area_in_total"/>
                             <field name="area_out_total"/>
                             <field name="sale_workshop_reserved" widget="boolean_toggle"/>
+                            <field name="state" widget="badge"/>
+                        </list>
+                    </field>
+                </page>
+
+                <page string="Placas base taller"
+                      name="stone_workshop_input_selections"
+                      invisible="state not in ('sale', 'done') and stone_workshop_input_selection_count == 0">
+
+                    <group>
+                        <group>
+                            <field name="stone_workshop_input_selection_count" readonly="1"/>
+                            <field name="stone_workshop_input_selection_total_qty" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <div class="alert alert-info" role="alert">
+                        Esta sección muestra las placas, formatos o retazos del <strong>producto base</strong>
+                        que serán consumidos por taller para fabricar el producto final vendido al cliente.
+                        No son los lotes finales de entrega.
+                    </div>
+
+                    <field name="stone_workshop_input_selection_ids" readonly="1">
+                        <list decoration-success="state in ('reserved', 'moved_to_workshop')"
+                              decoration-muted="state == 'cancelled'">
+                            <field name="sale_line_id"/>
+                            <field name="product_final_id"/>
+                            <field name="base_product_id"/>
+                            <field name="lot_id"/>
+                            <field name="location_id"/>
+                            <field name="material_type"/>
+                            <field name="qty_in"/>
+                            <field name="area_sqm"/>
+                            <field name="block_name"/>
+                            <field name="workshop_order_id"/>
+                            <field name="workshop_input_line_id"/>
+                            <field name="consume_picking_id"/>
                             <field name="state" widget="badge"/>
                         </list>
                     </field>

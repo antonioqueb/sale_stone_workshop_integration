@@ -110,6 +110,27 @@ class SaleOrderLine(models.Model):
         compute='_compute_stone_workshop_lots',
         store=False,
     )
+
+    stone_workshop_input_selection_ids = fields.One2many(
+        'sale.stone.workshop.input.selection',
+        'sale_line_id',
+        string='Placas base a consumir',
+        copy=False,
+    )
+    stone_workshop_input_selector_anchor = fields.Boolean(
+        string='Selector placas base',
+        compute='_compute_stone_workshop_input_selection_summary',
+    )
+    stone_workshop_input_selection_count = fields.Integer(
+        string='Placas base seleccionadas',
+        compute='_compute_stone_workshop_input_selection_summary',
+    )
+    stone_workshop_input_selection_total_qty = fields.Float(
+        string='Total base seleccionado',
+        compute='_compute_stone_workshop_input_selection_summary',
+        digits=(12, 4),
+    )
+
     stone_is_workshop_service_line = fields.Boolean(
         string='Línea de servicio taller',
         copy=False,
@@ -133,6 +154,7 @@ class SaleOrderLine(models.Model):
         'stone_workshop_order_id.input_line_ids.state',
         'stone_workshop_order_id.output_line_ids.state',
         'stone_workshop_order_id.output_line_ids.lot_id',
+        'stone_workshop_input_selection_ids.state',
         'lot_ids',
     )
     def _compute_stone_workshop_status(self):
@@ -141,8 +163,13 @@ class SaleOrderLine(models.Model):
             if not line.stone_workshop_required:
                 line.stone_workshop_assignment_state = 'none'
                 continue
+
+            active_selections = line.stone_workshop_input_selection_ids.filtered(
+                lambda s: s.state != 'cancelled'
+            )
+
             if not order:
-                line.stone_workshop_assignment_state = 'pending_inputs'
+                line.stone_workshop_assignment_state = 'reserved_inputs' if active_selections else 'pending_inputs'
                 continue
             if order.state == 'cancel':
                 line.stone_workshop_assignment_state = 'cancelled'
@@ -162,7 +189,7 @@ class SaleOrderLine(models.Model):
                 line.stone_workshop_assignment_state = 'in_workshop'
             elif output_lines:
                 line.stone_workshop_assignment_state = 'outputs_pending'
-            elif input_lines.filtered(lambda l: l.state == 'reserved_for_workshop'):
+            elif input_lines.filtered(lambda l: l.state == 'reserved_for_workshop') or active_selections:
                 line.stone_workshop_assignment_state = 'reserved_inputs'
             else:
                 line.stone_workshop_assignment_state = 'pending_inputs'
@@ -172,6 +199,8 @@ class SaleOrderLine(models.Model):
         'stone_workshop_order_id.output_line_ids.lot_id',
         'stone_workshop_order_id.input_line_ids.state',
         'stone_workshop_order_id.output_line_ids.state',
+        'stone_workshop_input_selection_ids.lot_id',
+        'stone_workshop_input_selection_ids.state',
     )
     def _compute_stone_workshop_lots(self):
         for line in self:
@@ -189,10 +218,32 @@ class SaleOrderLine(models.Model):
                     and l.lot_id
                 ).mapped('lot_id')
 
+            if not input_lots:
+                input_lots = line.stone_workshop_input_selection_ids.filtered(
+                    lambda s: s.state != 'cancelled' and s.lot_id
+                ).mapped('lot_id')
+
             line.stone_workshop_input_lot_ids = input_lots
             line.stone_workshop_output_lot_ids = output_lots
             line.stone_workshop_input_count = len(input_lots)
             line.stone_workshop_output_count = len(output_lots)
+
+    @api.depends(
+        'stone_workshop_required',
+        'stone_workshop_base_product_id',
+        'stone_workshop_input_selection_ids.qty_in',
+        'stone_workshop_input_selection_ids.state',
+    )
+    def _compute_stone_workshop_input_selection_summary(self):
+        for line in self:
+            selections = line.stone_workshop_input_selection_ids.filtered(
+                lambda s: s.state != 'cancelled'
+            )
+            line.stone_workshop_input_selector_anchor = bool(
+                line.stone_workshop_required and line.stone_workshop_base_product_id
+            )
+            line.stone_workshop_input_selection_count = len(selections)
+            line.stone_workshop_input_selection_total_qty = sum(selections.mapped('qty_in'))
 
     @api.model
     def _stone_workshop_vals_from_product(self, product):
@@ -321,12 +372,7 @@ class SaleOrderLine(models.Model):
         return max(qty, 0.0)
 
     def _stone_workshop_get_line_uom(self):
-        """Obtiene la unidad de medida de la línea de forma compatible con Odoo 19.
-
-        En Odoo 19 Enterprise el campo de la línea puede estar expuesto como
-        product_uom_id, mientras que en versiones anteriores era product_uom.
-        No se debe acceder directamente a self.product_uom porque puede no existir.
-        """
+        """Obtiene la unidad de medida de la línea de forma compatible con Odoo 19."""
         self.ensure_one()
 
         for field_name in ('product_uom_id', 'product_uom'):
@@ -376,6 +422,293 @@ class SaleOrderLine(models.Model):
         covered = reserved_on_sale + free_final
 
         return float_compare(covered, required, precision_rounding=rounding) < 0
+
+    # -------------------------------------------------------------------------
+    # Selección de placas base para taller desde la venta
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_active_input_selections(self):
+        return self.stone_workshop_input_selection_ids.filtered(
+            lambda s: s.state != 'cancelled'
+        )
+
+    def _stone_workshop_assert_can_select_base_inputs(self):
+        self.ensure_one()
+
+        if self.display_type or self.stone_is_workshop_service_line:
+            raise UserError(_('Esta línea no permite selección de placas base.'))
+        if self.order_id.state not in ('sale', 'done'):
+            raise UserError(_(
+                'La selección de placas base para taller solo está permitida en órdenes de venta confirmadas.'
+            ))
+        if not self.stone_workshop_required:
+            raise UserError(_('La línea no está marcada como Requiere taller.'))
+        if not self.stone_workshop_base_product_id:
+            raise UserError(_('Configura el producto base antes de seleccionar placas.'))
+        if not self.stone_workshop_process_id:
+            raise UserError(_('Configura el proceso de taller antes de seleccionar placas.'))
+
+    def _stone_workshop_safe_int_list(self, values):
+        result = []
+        for value in values or []:
+            try:
+                clean = int(value)
+            except (TypeError, ValueError):
+                continue
+            if clean and clean not in result:
+                result.append(clean)
+        return result
+
+    def _stone_workshop_parse_qty_breakdown(self, breakdown):
+        result = {}
+        if not breakdown:
+            return result
+        if isinstance(breakdown, str):
+            try:
+                breakdown = json.loads(breakdown)
+            except (json.JSONDecodeError, TypeError):
+                breakdown = {}
+        if not isinstance(breakdown, dict):
+            return result
+        for key, value in breakdown.items():
+            try:
+                lot_id = int(key)
+                qty = float(value or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if lot_id and qty > 0:
+                result[lot_id] = qty
+        return result
+
+    def _stone_workshop_prepare_selection_vals_from_lots(self, lot_ids, breakdown=None):
+        self.ensure_one()
+
+        safe_lot_ids = self._stone_workshop_safe_int_list(lot_ids)
+        if not safe_lot_ids:
+            return []
+
+        breakdown = self._stone_workshop_parse_qty_breakdown(breakdown)
+        warehouse = self.order_id.warehouse_id
+        location_id = warehouse.lot_stock_id.id if warehouse and warehouse.lot_stock_id else False
+
+        vals_list = self.env['workshop.order'].prepare_input_line_vals_from_lots(
+            self.stone_workshop_base_product_id.id,
+            safe_lot_ids,
+            location_id=location_id,
+        )
+
+        for vals in vals_list:
+            lot_id = vals.get('lot_id')
+            if isinstance(lot_id, (list, tuple)):
+                lot_id = lot_id[0] if lot_id else False
+            try:
+                lot_id = int(lot_id or 0)
+            except (TypeError, ValueError):
+                lot_id = 0
+
+            # prepare_input_line_vals_from_lots() devuelve valores para
+            # workshop.input.line. La selección en venta usa base_product_id
+            # para evitar colisión semántica con el producto final vendido.
+            vals.pop('product_id', None)
+
+            manual_qty = breakdown.get(lot_id)
+            if manual_qty and manual_qty > 0:
+                vals['qty_in'] = manual_qty
+                vals['area_sqm'] = manual_qty
+
+            vals.update({
+                'sale_order_id': self.order_id.id,
+                'sale_line_id': self.id,
+                'product_final_id': self.product_id.id,
+                'base_product_id': self.stone_workshop_base_product_id.id,
+                'reserved_origin': '%s / %s' % (
+                    self.order_id.name or '',
+                    self.product_id.display_name or '',
+                ),
+                'state': 'selected',
+            })
+
+        return vals_list
+
+    def _stone_workshop_validate_lots_not_committed_elsewhere(self, target_lot_ids):
+        self.ensure_one()
+
+        target_lot_ids = set(target_lot_ids or [])
+        if not target_lot_ids:
+            return True
+
+        current_lot_ids = set(self._stone_workshop_active_input_selections().mapped('lot_id').ids)
+        committed_lot_ids = set(self.env['stock.quant']._get_committed_lot_ids(
+            self.stone_workshop_base_product_id.id
+        ))
+        conflict_ids = target_lot_ids & (committed_lot_ids - current_lot_ids)
+
+        if conflict_ids:
+            lots = self.env['stock.lot'].browse(list(conflict_ids))
+            raise UserError(_(
+                'No puedes seleccionar estas placas porque ya están comprometidas en otra venta, apartado u orden de taller:\n%s'
+            ) % ', '.join(lots.mapped('name')))
+
+        return True
+
+    def get_workshop_input_selector_data(self):
+        self.ensure_one()
+
+        selections = self._stone_workshop_active_input_selections()
+        selected_lot_ids = selections.mapped('lot_id').ids
+        breakdown = {
+            str(selection.lot_id.id): selection.qty_in
+            for selection in selections
+            if selection.lot_id and selection.qty_in
+        }
+
+        return {
+            'line_id': self.id,
+            'sale_order_id': self.order_id.id,
+            'sale_order_name': self.order_id.name or '',
+            'state': self.order_id.state,
+            'can_select': bool(
+                self.order_id.state in ('sale', 'done')
+                and self.stone_workshop_required
+                and self.stone_workshop_base_product_id
+                and self.stone_workshop_process_id
+            ),
+            'workshop_required': bool(self.stone_workshop_required),
+            'has_workshop_order': bool(self.stone_workshop_order_id),
+            'workshop_order_id': self.stone_workshop_order_id.id if self.stone_workshop_order_id else False,
+            'workshop_order_name': self.stone_workshop_order_id.name if self.stone_workshop_order_id else '',
+            'product_final_id': self.product_id.id if self.product_id else False,
+            'product_final_name': self.product_id.display_name if self.product_id else '',
+            'base_product_id': self.stone_workshop_base_product_id.id if self.stone_workshop_base_product_id else False,
+            'base_product_name': self.stone_workshop_base_product_id.display_name if self.stone_workshop_base_product_id else '',
+            'process_id': self.stone_workshop_process_id.id if self.stone_workshop_process_id else False,
+            'process_name': self.stone_workshop_process_id.display_name if self.stone_workshop_process_id else '',
+            'requested_qty': self.product_uom_qty or 0.0,
+            'selected_lot_ids': selected_lot_ids,
+            'breakdown': breakdown,
+            'selected_count': len(selections),
+            'selected_qty': sum(selections.mapped('qty_in')),
+            'selections': [{
+                'id': selection.id,
+                'lot_id': selection.lot_id.id,
+                'lot_name': selection.lot_id.name or '',
+                'base_product_id': selection.base_product_id.id,
+                'base_product_name': selection.base_product_id.display_name or '',
+                'qty_in': selection.qty_in or 0.0,
+                'area_sqm': selection.area_sqm or 0.0,
+                'material_type': selection.material_type or '',
+                'state': selection.state or '',
+                'state_label': dict(selection._fields['state'].selection).get(selection.state, selection.state),
+                'location_id': selection.location_id.id if selection.location_id else False,
+                'location_name': selection.location_id.display_name if selection.location_id else '',
+                'workshop_order_id': selection.workshop_order_id.id if selection.workshop_order_id else False,
+                'workshop_order_name': selection.workshop_order_id.name if selection.workshop_order_id else '',
+            } for selection in selections],
+        }
+
+    def write_workshop_input_selection_from_lots(self, lot_ids=None, breakdown=None):
+        self.ensure_one()
+        self._stone_workshop_assert_can_select_base_inputs()
+
+        safe_lot_ids = self._stone_workshop_safe_int_list(lot_ids)
+        self._stone_workshop_validate_lots_not_committed_elsewhere(safe_lot_ids)
+
+        Selection = self.env['sale.stone.workshop.input.selection']
+        active_selections = self._stone_workshop_active_input_selections()
+
+        locked = active_selections.filtered(
+            lambda s: s.workshop_input_line_id and s.workshop_input_line_id.is_consumed
+        )
+        if locked:
+            raise UserError(_(
+                'No puedes modificar la selección porque ya hay placas enviadas/consumidas en taller: %s'
+            ) % ', '.join(locked.mapped('lot_id.name')))
+
+        vals_list = self._stone_workshop_prepare_selection_vals_from_lots(
+            safe_lot_ids,
+            breakdown=breakdown,
+        )
+        vals_by_lot = {}
+        for vals in vals_list:
+            lot_id = vals.get('lot_id')
+            if isinstance(lot_id, (list, tuple)):
+                lot_id = lot_id[0] if lot_id else False
+            if lot_id:
+                vals_by_lot[int(lot_id)] = vals
+
+        to_cancel = active_selections.filtered(lambda s: s.lot_id.id not in safe_lot_ids)
+        for selection in to_cancel:
+            input_line = selection.workshop_input_line_id
+            if input_line and input_line.exists() and not input_line.is_consumed:
+                input_line.unlink()
+            selection.write({
+                'state': 'cancelled',
+                'workshop_input_line_id': False,
+                'workshop_order_id': False,
+            })
+
+        for lot_id in safe_lot_ids:
+            vals = vals_by_lot.get(lot_id)
+            if not vals:
+                continue
+
+            selection = active_selections.filtered(lambda s: s.lot_id.id == lot_id)[:1]
+            if selection:
+                allowed_vals = dict(vals)
+                allowed_vals.pop('sale_order_id', None)
+                allowed_vals.pop('sale_line_id', None)
+                allowed_vals.pop('product_final_id', None)
+                selection.write(allowed_vals)
+            else:
+                Selection.create(vals)
+
+        if self.stone_workshop_order_id:
+            self._stone_workshop_push_input_selections_to_workshop(self.stone_workshop_order_id)
+
+        return self.get_workshop_input_selector_data()
+
+    def _stone_workshop_push_input_selections_to_workshop(self, workshop):
+        self.ensure_one()
+
+        if not workshop:
+            return False
+
+        active_selections = self._stone_workshop_active_input_selections()
+        if not active_selections:
+            return False
+
+        if workshop.state in ('sent_to_workshop', 'in_progress', 'partial_done', 'done', 'cancel'):
+            consumed = active_selections.filtered(
+                lambda s: s.workshop_input_line_id and s.workshop_input_line_id.is_consumed
+            )
+            if consumed:
+                return True
+
+        WorkshopInput = self.env['workshop.input.line']
+        created_or_updated = WorkshopInput
+
+        for selection in active_selections:
+            vals = selection._to_workshop_input_vals(workshop)
+            input_line = selection.workshop_input_line_id
+
+            if input_line and input_line.exists():
+                if input_line.is_consumed:
+                    continue
+                input_line.with_context(skip_sale_workshop_reservation=True).write(vals)
+            else:
+                input_line = WorkshopInput.with_context(skip_sale_workshop_reservation=True).create(vals)
+
+            selection.write({
+                'workshop_order_id': workshop.id,
+                'workshop_input_line_id': input_line.id,
+            })
+            created_or_updated |= input_line
+
+        if created_or_updated and hasattr(workshop, '_sale_workshop_refresh_input_reservation'):
+            workshop._sale_workshop_refresh_input_reservation()
+
+        active_selections._sync_state_from_workshop_input()
+        return True
 
     def action_view_stone_workshop_order(self):
         self.ensure_one()
