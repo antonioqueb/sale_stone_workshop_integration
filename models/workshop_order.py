@@ -139,6 +139,8 @@ class WorkshopOrder(models.Model):
             'skip_sale_workshop_reservation': True,
             'skip_lot_duplicate_check': True,
             'skip_stock_lot_duplicate_check': True,
+            'skip_duplicate_lot_validation': True,
+            'skip_hold_validation': True,
         }
 
     def _sale_workshop_reservation_context(self):
