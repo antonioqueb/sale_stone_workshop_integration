@@ -468,6 +468,13 @@ class WorkshopOrder(models.Model):
         bypasseado NO decrementa reserved_quantity del quant y deja reserva
         huérfana que se DUPLICA cuando la línea exacta vuelve a reservar el
         mismo lote.
+
+        Reserva exacta:
+        Se crea UNA sola move line exacta por lote con `quantity` = qty_in. Al
+        crearse sobre un move ya confirmado, Odoo reserva el quant una sola vez.
+        NO se llama a stock.quant._update_reserved_quantity manualmente: hacerlo
+        duplicaba reserved_quantity (current = 2×qty) y obligaba al reconcile a
+        corregirlo en cada OT. El reconcile se mantiene como red de seguridad.
         """
         self.ensure_one()
 
@@ -570,18 +577,12 @@ class WorkshopOrder(models.Model):
 
             qty_to_reserve = line.qty_in or 0.0
 
-            # Reserva real del quant antes de crear la move line exacta.
-            # Si algún hook adicional duplica reserved_quantity, el reconcile
-            # posterior lo corrige contra las move lines activas.
-            if qty_to_reserve > 0.0:
-                self.env['stock.quant'].sudo()._update_reserved_quantity(
-                    line.product_id,
-                    source_location,
-                    qty_to_reserve,
-                    lot_id=line.lot_id,
-                    strict=False,
-                )
-
+            # NO reservar manualmente el quant: crear la move line con `quantity`
+            # sobre un move ya confirmado reserva el quant una sola vez. Reservar
+            # manualmente aquí (stock.quant._update_reserved_quantity) duplicaba
+            # reserved_quantity (current = 2×qty) y obligaba al reconcile a
+            # corregirlo en cada OT. El reconcile posterior queda como red de
+            # seguridad por si algún hook adicional altera la reserva.
             ml_vals.update(self._sale_workshop_move_line_qty_vals(qty_to_reserve))
 
             move_line = StockMoveLine.with_context(**reservation_ctx).create(ml_vals)

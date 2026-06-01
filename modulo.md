@@ -4512,7 +4512,7 @@ registry.category("fields").add("sale_workshop_input_selector", saleWorkshopInpu
                 </button>
             </xpath>
 
-            <xpath expr="//field[@name='order_line']/list" position="inside">
+            <xpath expr="//field[@name='order_line']/list/field[@name='product_uom_qty']" position="after">
 
                 <field name="stone_workshop_required"
                        string="Requiere taller"
