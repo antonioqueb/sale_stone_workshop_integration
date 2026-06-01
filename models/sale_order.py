@@ -75,7 +75,16 @@ class SaleOrder(models.Model):
                 confirmed_orders |= order
 
         if confirmed_orders:
-            confirmed_orders._stone_workshop_create_missing_orders()
+            # Al confirmar venta SIEMPRE se crea la OT de las líneas elegibles
+            # (las que tienen producto base, proceso y requieren taller). Se
+            # ignoran los gates de auto_create, trigger=manual y needs_supply
+            # porque el usuario explícitamente seleccionó placas y proceso para
+            # esa línea — ya no es necesario un botón "Crear OT taller".
+            candidate_lines = confirmed_orders._stone_workshop_manual_candidate_lines()
+            if candidate_lines:
+                confirmed_orders._stone_workshop_create_missing_orders(
+                    force_lines=candidate_lines,
+                )
 
         return res
 

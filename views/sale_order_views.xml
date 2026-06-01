@@ -8,12 +8,6 @@
         <field name="arch" type="xml">
 
             <xpath expr="//header" position="inside">
-                <button name="action_create_stone_workshop_orders"
-                        string="Crear OT taller"
-                        type="object"
-                        class="btn-secondary"
-                        invisible="state not in ('sale', 'done')"/>
-
                 <button name="action_sync_workshop_input_selections"
                         string="Sincronizar placas taller"
                         type="object"
