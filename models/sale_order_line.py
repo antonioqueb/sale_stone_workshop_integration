@@ -446,10 +446,8 @@ class SaleOrderLine(models.Model):
 
         if self.display_type or self.stone_is_workshop_service_line:
             raise UserError(_('Esta línea no permite selección de placas base.'))
-        if self.order_id.state not in ('sale', 'done'):
-            raise UserError(_(
-                'La selección de placas base para taller solo está permitida en órdenes de venta confirmadas.'
-            ))
+        if self.order_id.state == 'cancel':
+            raise UserError(_('La orden de venta está cancelada; no puedes seleccionar placas.'))
         if not self.stone_workshop_required:
             raise UserError(_('La línea no está marcada como Requiere taller.'))
         if not self.stone_workshop_base_product_id:
@@ -591,7 +589,7 @@ class SaleOrderLine(models.Model):
             'sale_order_name': self.order_id.name or '',
             'state': self.order_id.state,
             'can_select': bool(
-                self.order_id.state in ('sale', 'done')
+                self.order_id.state != 'cancel'
                 and self.stone_workshop_required
                 and self.stone_workshop_base_product_id
                 and self.stone_workshop_process_id

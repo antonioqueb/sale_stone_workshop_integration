@@ -110,7 +110,9 @@ export class SaleWorkshopInputSelector extends Component {
             } else if (!data?.process_id) {
                 this.state.tooltip = "Configura el proceso de taller.";
             } else if (!data?.can_select) {
-                this.state.tooltip = "Solo disponible en órdenes confirmadas.";
+                this.state.tooltip = "Selección no disponible (orden cancelada o sin configurar).";
+            } else if (data?.state === "draft" || data?.state === "sent") {
+                this.state.tooltip = `Pre-seleccionar placas base (no se apartan hasta confirmar): ${data.base_product_name || ""}`;
             } else {
                 this.state.tooltip = `Seleccionar placas base: ${data.base_product_name || ""}`;
             }

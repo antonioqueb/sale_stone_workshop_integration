@@ -122,7 +122,7 @@
 
                 <page string="Placas base taller"
                       name="stone_workshop_input_selections"
-                      invisible="state not in ('sale', 'done') and stone_workshop_input_selection_count == 0">
+                      invisible="state == 'cancel' or stone_workshop_input_selection_count == 0">
 
                     <group>
                         <group>
