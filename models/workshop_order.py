@@ -8,11 +8,7 @@ from odoo.tools.float_utils import float_compare
 _logger = logging.getLogger(__name__)
 
 ACTIVE_WORKSHOP_STATES = (
-    'validated',
-    'confirmed',
-    'sent_to_workshop',
-    'in_progress',
-    'partial_done',
+    'in_workshop',
 )
 
 
@@ -620,7 +616,7 @@ class WorkshopOrder(models.Model):
                 continue
             if not order.sale_order_id or not order.sale_line_id:
                 continue
-            if order.state in ('sent_to_workshop', 'in_progress', 'partial_done', 'done', 'cancel'):
+            if order.state in ('in_workshop', 'done', 'cancel'):
                 continue
 
             existing = order.sale_workshop_reservation_picking_id
@@ -931,7 +927,14 @@ class WorkshopOrder(models.Model):
     # Workshop flow hooks
     # ------------------------------------------------------------------
 
-    def action_send_to_workshop(self):
+    def action_confirm_workshop(self):
+        """Override: reutiliza el picking de reserva pre-creado para venta.
+
+        Si la orden viene amarrada a una venta y ya existe un picking de reserva
+        no validado, lo usamos como picking de consumo en vez de crear uno
+        nuevo. El resto del flujo (auto-generar salidas, validar reglas, pasar
+        a `in_workshop`) replica al padre.
+        """
         handled = self.env['workshop.order']
 
         for order in self:
@@ -941,26 +944,30 @@ class WorkshopOrder(models.Model):
             if not order.sale_order_id or not picking or picking.state in ('cancel', 'done') or not pending_inputs:
                 continue
 
-            if order.state in ('draft', 'validated'):
-                order.action_confirm()
-
-            if order.state not in ('confirmed', 'sent_to_workshop'):
-                raise UserError(_('Solo puedes enviar a taller órdenes confirmadas.'))
+            if order.state != 'draft':
+                raise UserError(_('Solo puedes confirmar al taller órdenes en borrador.'))
 
             order._sale_workshop_cleanup_stale_reservations(input_lines=pending_inputs)
+            for input_line in pending_inputs:
+                order._sale_workshop_assert_input_line_effective_available(input_line)
+
+            if not order._get_active_output_lines():
+                order._auto_generate_outputs()
             order._validate_business_rules()
 
             order.with_context(**order._sale_workshop_stock_context())._validate_picking(picking)
-
             order.consume_picking_ids = [(4, picking.id)]
 
             pending_inputs.with_context(skip_sale_workshop_reservation=True).write({
-                'state': 'sent_to_workshop',
+                'state': 'in_progress',
                 'is_consumed': True,
                 'consume_picking_id': picking.id,
             })
 
-            order.write({'state': 'sent_to_workshop'})
+            order.write({
+                'state': 'in_workshop',
+                'date_start': order.date_start or fields.Datetime.now(),
+            })
             order._sale_workshop_sync_selection_states()
 
             order.message_post(
@@ -972,22 +979,11 @@ class WorkshopOrder(models.Model):
         remaining = self - handled
 
         if remaining:
-            return super(WorkshopOrder, remaining).action_send_to_workshop()
+            return super(WorkshopOrder, remaining).action_confirm_workshop()
 
         return True
 
-    def action_validate_order(self):
-        for order in self:
-            if order.sale_order_id:
-                pending_inputs = order._sale_workshop_input_lines_to_reserve()
-                if pending_inputs:
-                    order._sale_workshop_cleanup_stale_reservations(input_lines=pending_inputs)
-                    for input_line in pending_inputs:
-                        order._sale_workshop_assert_input_line_effective_available(input_line)
-
-        return super().action_validate_order()
-
-    def action_receive_outputs(self):
+    def action_declare_result(self):
         # La validación base del picking de entrada de salidas dispara
         # _trigger_assign(), que re-reserva automáticamente movimientos de
         # entregas pendientes del mismo producto. Esa reasignación automática
@@ -998,15 +994,7 @@ class WorkshopOrder(models.Model):
         res = super(
             WorkshopOrder,
             self.with_context(**self._sale_workshop_stock_context()),
-        ).action_receive_outputs()
-        self._sale_workshop_assign_outputs_to_sale(manual=False)
-        return res
-
-    def action_done(self):
-        res = super(
-            WorkshopOrder,
-            self.with_context(**self._sale_workshop_stock_context()),
-        ).action_done()
+        ).action_declare_result()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         return res
 

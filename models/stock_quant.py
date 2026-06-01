@@ -2,19 +2,13 @@
 from odoo import api, models
 
 ACTIVE_WORKSHOP_STATES = (
-    'validated',
-    'confirmed',
-    'sent_to_workshop',
-    'in_progress',
-    'partial_done',
+    'in_workshop',
 )
 
 SALE_LINKED_INPUT_STATES = (
     'pending',
     'reserved_for_workshop',
-    'sent_to_workshop',
     'in_progress',
-    'partial_done',
 )
 
 SALE_WORKSHOP_SELECTION_ACTIVE_STATES = (
@@ -43,7 +37,7 @@ class StockQuant(models.Model):
         lines = self.env['workshop.input.line'].search([
             ('product_id', '=', int(product_id)),
             ('lot_id', '!=', False),
-            ('state', 'not in', ('cancelled', 'done', 'rejected', 'damaged')),
+            ('state', 'not in', ('cancelled', 'done', 'rejected')),
         ])
         for line in lines:
             order = line.order_id

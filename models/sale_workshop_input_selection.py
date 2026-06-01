@@ -390,7 +390,7 @@ class SaleStoneWorkshopInputSelection(models.Model):
                     selection.state = 'selected'
                 continue
 
-            if input_line.state in ('sent_to_workshop', 'in_progress', 'partial_done', 'done'):
+            if input_line.state in ('in_progress', 'done'):
                 selection.state = 'moved_to_workshop'
             elif input_line.state == 'reserved_for_workshop':
                 selection.state = 'reserved'

@@ -194,7 +194,7 @@ class SaleOrderLine(models.Model):
 
             if final_output_lots and set(final_output_lots.ids).issubset(set(line.lot_ids.ids)):
                 line.stone_workshop_assignment_state = 'assigned'
-            elif order.state in ('sent_to_workshop', 'in_progress', 'partial_done'):
+            elif order.state == 'in_workshop':
                 line.stone_workshop_assignment_state = 'in_workshop'
             elif output_lines:
                 line.stone_workshop_assignment_state = 'outputs_pending'
@@ -702,7 +702,7 @@ class SaleOrderLine(models.Model):
         if not active_selections:
             return False
 
-        if workshop.state in ('sent_to_workshop', 'in_progress', 'partial_done', 'done', 'cancel'):
+        if workshop.state in ('in_workshop', 'done', 'cancel'):
             consumed = active_selections.filtered(
                 lambda s: s.workshop_input_line_id and s.workshop_input_line_id.is_consumed
             )

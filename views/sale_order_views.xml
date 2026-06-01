@@ -103,7 +103,7 @@
 
                     <field name="stone_workshop_order_ids" readonly="1">
                         <list decoration-success="state == 'done'"
-                              decoration-warning="state in ('confirmed', 'sent_to_workshop', 'in_progress', 'partial_done')"
+                              decoration-warning="state == 'in_workshop'"
                               decoration-muted="state == 'cancel'">
 
                             <field name="name"/>

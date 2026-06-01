@@ -19,7 +19,7 @@
                         string="Asignar a pedido"
                         type="object"
                         class="btn-secondary"
-                        invisible="not sale_order_id or state not in ('partial_done', 'done')"/>
+                        invisible="not sale_order_id or state != 'done'"/>
             </xpath>
 
             <xpath expr="//div[@name='button_box']" position="inside">
@@ -47,10 +47,10 @@
 
             <xpath expr="//field[@name='process_id']" position="after">
                 <field name="sale_order_id" readonly="1"/>
-                <field name="sale_line_id" readonly="1"/>
+                <field name="sale_line_id" invisible="1"/>
                 <field name="sale_partner_id" readonly="1"/>
                 <field name="sale_requested_qty" readonly="1"/>
-                <field name="sale_workshop_reserved" readonly="1"/>
+                <field name="sale_workshop_reserved" invisible="1"/>
             </xpath>
 
             <xpath expr="//field[@name='input_line_ids']/list/field[@name='reserved_origin']" position="after">
