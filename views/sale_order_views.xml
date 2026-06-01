@@ -33,7 +33,7 @@
                 </button>
             </xpath>
 
-            <xpath expr="//field[@name='order_line']/list" position="inside">
+            <xpath expr="//field[@name='order_line']/list/field[@name='auto_transit_assing']" position="after">
 
                 <field name="stone_workshop_required"
                        string="Requiere taller"

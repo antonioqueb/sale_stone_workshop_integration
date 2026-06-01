@@ -200,6 +200,365 @@ class ProductProduct(models.Model):
         store=True,
     )```
 
+## ./models/sale_order.py
+```py
+# -*- coding: utf-8 -*-
+import logging
+
+from odoo import api, fields, models, _
+from odoo.exceptions import UserError
+
+_logger = logging.getLogger(__name__)
+
+
+class SaleOrder(models.Model):
+    _inherit = 'sale.order'
+
+    stone_workshop_order_ids = fields.One2many(
+        'workshop.order',
+        'sale_order_id',
+        string='Órdenes de taller',
+        readonly=True,
+    )
+    stone_workshop_order_count = fields.Integer(
+        string='Órdenes de taller',
+        compute='_compute_stone_workshop_order_count',
+    )
+    stone_workshop_pending_count = fields.Integer(
+        string='Taller pendiente',
+        compute='_compute_stone_workshop_order_count',
+    )
+
+    stone_workshop_input_selection_ids = fields.One2many(
+        'sale.stone.workshop.input.selection',
+        'sale_order_id',
+        string='Placas base a consumir',
+        readonly=True,
+    )
+    stone_workshop_input_selection_count = fields.Integer(
+        string='Placas base seleccionadas',
+        compute='_compute_stone_workshop_input_selection_summary',
+    )
+    stone_workshop_input_selection_total_qty = fields.Float(
+        string='Total base seleccionado',
+        compute='_compute_stone_workshop_input_selection_summary',
+        digits=(12, 4),
+    )
+
+    @api.depends('stone_workshop_order_ids.state')
+    def _compute_stone_workshop_order_count(self):
+        for order in self:
+            orders = order.stone_workshop_order_ids
+            order.stone_workshop_order_count = len(orders)
+            order.stone_workshop_pending_count = len(
+                orders.filtered(lambda o: o.state not in ('done', 'cancel'))
+            )
+
+    @api.depends(
+        'stone_workshop_input_selection_ids.state',
+        'stone_workshop_input_selection_ids.qty_in',
+    )
+    def _compute_stone_workshop_input_selection_summary(self):
+        for order in self:
+            selections = order.stone_workshop_input_selection_ids.filtered(
+                lambda s: s.state != 'cancelled'
+            )
+            order.stone_workshop_input_selection_count = len(selections)
+            order.stone_workshop_input_selection_total_qty = sum(selections.mapped('qty_in'))
+
+    def action_confirm(self):
+        res = super().action_confirm()
+
+        confirmed_orders = self.env['sale.order']
+        for order in self:
+            is_backup = (
+                'x_is_quote_backup' in order._fields
+                and order.x_is_quote_backup
+            )
+            if order.state in ('sale', 'done') and not is_backup:
+                confirmed_orders |= order
+
+        if confirmed_orders:
+            confirmed_orders._stone_workshop_create_missing_orders()
+
+        return res
+
+    # -------------------------------------------------------------------------
+    # Preparación de valores
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_get_workshop_vals(self, line):
+        self.ensure_one()
+
+        warehouse = (
+            self.warehouse_id
+            or self.env['stock.warehouse'].search([
+                ('company_id', '=', self.company_id.id)
+            ], limit=1)
+        )
+        location_src = warehouse.lot_stock_id if warehouse else False
+
+        notes = _(
+            '<p><strong>Orden generada desde venta.</strong></p>'
+            '<ul>'
+            '<li>Pedido: %(sale)s</li>'
+            '<li>Línea: %(line)s</li>'
+            '<li>Producto vendido/final: %(final)s</li>'
+            '<li>Producto base a apartar: %(base)s</li>'
+            '<li>Proceso: %(process)s</li>'
+            '</ul>'
+        ) % {
+            'sale': self.name or '',
+            'line': line.name or line.product_id.display_name or '',
+            'final': line.product_id.display_name or '',
+            'base': line.stone_workshop_base_product_id.display_name or '',
+            'process': line.stone_workshop_process_id.display_name or '',
+        }
+
+        vals = {
+            'sale_order_id': self.id,
+            'sale_line_id': line.id,
+            'operation_mode': line.stone_workshop_operation_mode or 'slab_finish',
+            'process_id': line.stone_workshop_process_id.id,
+            'input_product_id': line.stone_workshop_base_product_id.id,
+            'default_product_out_id': line.product_id.id,
+            'production_target_sqm': line.product_uom_qty or 0.0,
+            'target_pieces': 1,
+            'warehouse_id': warehouse.id if warehouse else False,
+            'location_src_id': location_src.id if location_src else False,
+            'location_dest_id': location_src.id if location_src else False,
+            'company_id': self.company_id.id,
+            'date_planned': (
+                self.commitment_date
+                if 'commitment_date' in self._fields
+                else False
+            ),
+            'notes': notes,
+        }
+
+        return vals
+
+    # -------------------------------------------------------------------------
+    # Diagnóstico de líneas
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_line_skip_reason(self, line, manual=False):
+        self.ensure_one()
+
+        if line.display_type:
+            return _('es una sección/nota.')
+        if getattr(line, 'stone_is_workshop_service_line', False):
+            return _('es una línea de servicio de taller.')
+        if not line.product_id:
+            return _('no tiene producto.')
+        if line.product_id.type == 'service':
+            return _('el producto es de tipo servicio.')
+        if not line.stone_workshop_required:
+            return _('no está marcada como Requiere taller.')
+        if line.stone_workshop_order_id:
+            return _('ya tiene una orden de taller vinculada.')
+        if not line.stone_workshop_base_product_id:
+            return _('no tiene producto base configurado.')
+        if not line.stone_workshop_process_id:
+            return _('no tiene proceso de taller configurado.')
+
+        if not manual:
+            if not line.stone_workshop_auto_create:
+                return _('tiene desactivada la creación automática de OT.')
+            if line.stone_workshop_trigger == 'manual':
+                return _('tiene disparador manual.')
+            if not line._stone_workshop_needs_supply():
+                return _('el disparador no aplica porque no se detectó faltante de producto final.')
+
+        return False
+
+    def _stone_workshop_manual_candidate_lines(self):
+        """Líneas candidatas para el botón manual Crear OT taller."""
+        SaleLine = self.env['sale.order.line']
+        lines = SaleLine
+
+        for order in self:
+            for line in order.order_line:
+                reason = order._stone_workshop_line_skip_reason(line, manual=True)
+                if reason:
+                    _logger.info(
+                        '[STONE WORKSHOP SALE] Línea %s omitida en creación manual: %s',
+                        line.id,
+                        reason,
+                    )
+                    continue
+
+                lines |= line
+
+        return lines
+
+    # -------------------------------------------------------------------------
+    # Creación de órdenes de taller
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_create_missing_orders(self, force_lines=False):
+        WorkshopOrder = self.env['workshop.order']
+        created_orders = WorkshopOrder
+
+        for order in self:
+            if order.state not in ('sale', 'done'):
+                _logger.info(
+                    '[STONE WORKSHOP SALE] Orden %s omitida: state=%s',
+                    order.name,
+                    order.state,
+                )
+                continue
+
+            if force_lines:
+                candidate_lines = force_lines.filtered(lambda l: l.order_id == order)
+                manual = True
+            else:
+                candidate_lines = order.order_line
+                manual = False
+
+            for line in candidate_lines:
+                reason = order._stone_workshop_line_skip_reason(line, manual=manual)
+
+                if reason:
+                    _logger.info(
+                        '[STONE WORKSHOP SALE] No se crea OT para línea %s (%s): %s',
+                        line.id,
+                        line.product_id.display_name if line.product_id else 'Sin producto',
+                        reason,
+                    )
+
+                    if line.stone_workshop_order_id:
+                        created_orders |= line.stone_workshop_order_id
+
+                    continue
+
+                if not manual and not line._stone_workshop_needs_supply():
+                    _logger.info(
+                        '[STONE WORKSHOP SALE] Línea %s no requiere abastecimiento según trigger.',
+                        line.id,
+                    )
+                    continue
+
+                vals = order._stone_workshop_get_workshop_vals(line)
+                workshop = WorkshopOrder.create(vals)
+
+                line.with_context(skip_stone_workshop_product_defaults=True).write({
+                    'stone_workshop_order_id': workshop.id,
+                })
+
+                line._stone_workshop_push_input_selections_to_workshop(workshop)
+
+                created_orders |= workshop
+
+                body = _(
+                    'Se creó la orden de taller '
+                    '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
+                    'para producir <strong>%(final)s</strong> desde <strong>%(base)s</strong>.'
+                ) % {
+                    'id': workshop.id,
+                    'name': workshop.name,
+                    'final': line.product_id.display_name,
+                    'base': line.stone_workshop_base_product_id.display_name,
+                }
+
+                order.message_post(body=body)
+                workshop.message_post(
+                    body=_('Origen comercial: %s, línea %s.') % (
+                        order.name,
+                        line.display_name,
+                    )
+                )
+
+                _logger.info(
+                    '[STONE WORKSHOP SALE] Created workshop %s for sale %s line %s',
+                    workshop.name,
+                    order.name,
+                    line.id,
+                )
+
+        return created_orders
+
+    # -------------------------------------------------------------------------
+    # Botones
+    # -------------------------------------------------------------------------
+
+    def action_create_stone_workshop_orders(self):
+        for order in self:
+            if order.state not in ('sale', 'done'):
+                raise UserError(_(
+                    'Solo puedes crear órdenes de taller desde una orden de venta confirmada.'
+                ))
+
+        candidate_lines = self._stone_workshop_manual_candidate_lines()
+
+        if not candidate_lines:
+            details = []
+
+            for order in self:
+                for line in order.order_line:
+                    reason = order._stone_workshop_line_skip_reason(line, manual=True)
+                    product_name = (
+                        line.product_id.display_name
+                        if line.product_id
+                        else _('Sin producto')
+                    )
+                    details.append('- %s: %s' % (product_name, reason or _('apta')))
+
+            raise UserError(_(
+                'No se encontró ninguna línea apta para crear OT de taller.\n\n'
+                'Revisa estas condiciones:\n'
+                '- La orden debe estar confirmada.\n'
+                '- La línea debe tener producto almacenable/consumible.\n'
+                '- Requiere taller debe estar activo.\n'
+                '- Debe tener producto base.\n'
+                '- Debe tener proceso de taller.\n'
+                '- No debe tener ya una OT vinculada.\n\n'
+                'Diagnóstico:\n%s'
+            ) % '\n'.join(details))
+
+        created = self._stone_workshop_create_missing_orders(force_lines=candidate_lines)
+
+        if not created:
+            raise UserError(_(
+                'No se creó ninguna orden de taller. '
+                'Las líneas parecen aptas, pero no se generó registro. '
+                'Revisa permisos de workshop.order o reglas de seguridad.'
+            ))
+
+        if len(self) == 1:
+            return self.action_view_stone_workshop_orders()
+
+        return True
+
+    def action_sync_workshop_input_selections(self):
+        for order in self:
+            for line in order.order_line.filtered(lambda l: l.stone_workshop_order_id):
+                line._stone_workshop_push_input_selections_to_workshop(line.stone_workshop_order_id)
+        return True
+
+    def action_view_stone_workshop_orders(self):
+        self.ensure_one()
+
+        action = {
+            'type': 'ir.actions.act_window',
+            'name': _('Órdenes de Taller'),
+            'res_model': 'workshop.order',
+            'view_mode': 'list,form',
+            'domain': [('sale_order_id', '=', self.id)],
+            'context': {
+                'default_sale_order_id': self.id,
+            },
+        }
+
+        if self.stone_workshop_order_count == 1:
+            action.update({
+                'view_mode': 'form',
+                'res_id': self.stone_workshop_order_ids.id,
+            })
+
+        return action
+```
+
 ## ./models/sale_order_line.py
 ```py
 # -*- coding: utf-8 -*-
@@ -1279,365 +1638,6 @@ class SaleOrderLine(models.Model):
 
         return {}```
 
-## ./models/sale_order.py
-```py
-# -*- coding: utf-8 -*-
-import logging
-
-from odoo import api, fields, models, _
-from odoo.exceptions import UserError
-
-_logger = logging.getLogger(__name__)
-
-
-class SaleOrder(models.Model):
-    _inherit = 'sale.order'
-
-    stone_workshop_order_ids = fields.One2many(
-        'workshop.order',
-        'sale_order_id',
-        string='Órdenes de taller',
-        readonly=True,
-    )
-    stone_workshop_order_count = fields.Integer(
-        string='Órdenes de taller',
-        compute='_compute_stone_workshop_order_count',
-    )
-    stone_workshop_pending_count = fields.Integer(
-        string='Taller pendiente',
-        compute='_compute_stone_workshop_order_count',
-    )
-
-    stone_workshop_input_selection_ids = fields.One2many(
-        'sale.stone.workshop.input.selection',
-        'sale_order_id',
-        string='Placas base a consumir',
-        readonly=True,
-    )
-    stone_workshop_input_selection_count = fields.Integer(
-        string='Placas base seleccionadas',
-        compute='_compute_stone_workshop_input_selection_summary',
-    )
-    stone_workshop_input_selection_total_qty = fields.Float(
-        string='Total base seleccionado',
-        compute='_compute_stone_workshop_input_selection_summary',
-        digits=(12, 4),
-    )
-
-    @api.depends('stone_workshop_order_ids.state')
-    def _compute_stone_workshop_order_count(self):
-        for order in self:
-            orders = order.stone_workshop_order_ids
-            order.stone_workshop_order_count = len(orders)
-            order.stone_workshop_pending_count = len(
-                orders.filtered(lambda o: o.state not in ('done', 'cancel'))
-            )
-
-    @api.depends(
-        'stone_workshop_input_selection_ids.state',
-        'stone_workshop_input_selection_ids.qty_in',
-    )
-    def _compute_stone_workshop_input_selection_summary(self):
-        for order in self:
-            selections = order.stone_workshop_input_selection_ids.filtered(
-                lambda s: s.state != 'cancelled'
-            )
-            order.stone_workshop_input_selection_count = len(selections)
-            order.stone_workshop_input_selection_total_qty = sum(selections.mapped('qty_in'))
-
-    def action_confirm(self):
-        res = super().action_confirm()
-
-        confirmed_orders = self.env['sale.order']
-        for order in self:
-            is_backup = (
-                'x_is_quote_backup' in order._fields
-                and order.x_is_quote_backup
-            )
-            if order.state in ('sale', 'done') and not is_backup:
-                confirmed_orders |= order
-
-        if confirmed_orders:
-            confirmed_orders._stone_workshop_create_missing_orders()
-
-        return res
-
-    # -------------------------------------------------------------------------
-    # Preparación de valores
-    # -------------------------------------------------------------------------
-
-    def _stone_workshop_get_workshop_vals(self, line):
-        self.ensure_one()
-
-        warehouse = (
-            self.warehouse_id
-            or self.env['stock.warehouse'].search([
-                ('company_id', '=', self.company_id.id)
-            ], limit=1)
-        )
-        location_src = warehouse.lot_stock_id if warehouse else False
-
-        notes = _(
-            '<p><strong>Orden generada desde venta.</strong></p>'
-            '<ul>'
-            '<li>Pedido: %(sale)s</li>'
-            '<li>Línea: %(line)s</li>'
-            '<li>Producto vendido/final: %(final)s</li>'
-            '<li>Producto base a apartar: %(base)s</li>'
-            '<li>Proceso: %(process)s</li>'
-            '</ul>'
-        ) % {
-            'sale': self.name or '',
-            'line': line.name or line.product_id.display_name or '',
-            'final': line.product_id.display_name or '',
-            'base': line.stone_workshop_base_product_id.display_name or '',
-            'process': line.stone_workshop_process_id.display_name or '',
-        }
-
-        vals = {
-            'sale_order_id': self.id,
-            'sale_line_id': line.id,
-            'operation_mode': line.stone_workshop_operation_mode or 'slab_finish',
-            'process_id': line.stone_workshop_process_id.id,
-            'input_product_id': line.stone_workshop_base_product_id.id,
-            'default_product_out_id': line.product_id.id,
-            'production_target_sqm': line.product_uom_qty or 0.0,
-            'target_pieces': 1,
-            'warehouse_id': warehouse.id if warehouse else False,
-            'location_src_id': location_src.id if location_src else False,
-            'location_dest_id': location_src.id if location_src else False,
-            'company_id': self.company_id.id,
-            'date_planned': (
-                self.commitment_date
-                if 'commitment_date' in self._fields
-                else False
-            ),
-            'notes': notes,
-        }
-
-        return vals
-
-    # -------------------------------------------------------------------------
-    # Diagnóstico de líneas
-    # -------------------------------------------------------------------------
-
-    def _stone_workshop_line_skip_reason(self, line, manual=False):
-        self.ensure_one()
-
-        if line.display_type:
-            return _('es una sección/nota.')
-        if getattr(line, 'stone_is_workshop_service_line', False):
-            return _('es una línea de servicio de taller.')
-        if not line.product_id:
-            return _('no tiene producto.')
-        if line.product_id.type == 'service':
-            return _('el producto es de tipo servicio.')
-        if not line.stone_workshop_required:
-            return _('no está marcada como Requiere taller.')
-        if line.stone_workshop_order_id:
-            return _('ya tiene una orden de taller vinculada.')
-        if not line.stone_workshop_base_product_id:
-            return _('no tiene producto base configurado.')
-        if not line.stone_workshop_process_id:
-            return _('no tiene proceso de taller configurado.')
-
-        if not manual:
-            if not line.stone_workshop_auto_create:
-                return _('tiene desactivada la creación automática de OT.')
-            if line.stone_workshop_trigger == 'manual':
-                return _('tiene disparador manual.')
-            if not line._stone_workshop_needs_supply():
-                return _('el disparador no aplica porque no se detectó faltante de producto final.')
-
-        return False
-
-    def _stone_workshop_manual_candidate_lines(self):
-        """Líneas candidatas para el botón manual Crear OT taller."""
-        SaleLine = self.env['sale.order.line']
-        lines = SaleLine
-
-        for order in self:
-            for line in order.order_line:
-                reason = order._stone_workshop_line_skip_reason(line, manual=True)
-                if reason:
-                    _logger.info(
-                        '[STONE WORKSHOP SALE] Línea %s omitida en creación manual: %s',
-                        line.id,
-                        reason,
-                    )
-                    continue
-
-                lines |= line
-
-        return lines
-
-    # -------------------------------------------------------------------------
-    # Creación de órdenes de taller
-    # -------------------------------------------------------------------------
-
-    def _stone_workshop_create_missing_orders(self, force_lines=False):
-        WorkshopOrder = self.env['workshop.order']
-        created_orders = WorkshopOrder
-
-        for order in self:
-            if order.state not in ('sale', 'done'):
-                _logger.info(
-                    '[STONE WORKSHOP SALE] Orden %s omitida: state=%s',
-                    order.name,
-                    order.state,
-                )
-                continue
-
-            if force_lines:
-                candidate_lines = force_lines.filtered(lambda l: l.order_id == order)
-                manual = True
-            else:
-                candidate_lines = order.order_line
-                manual = False
-
-            for line in candidate_lines:
-                reason = order._stone_workshop_line_skip_reason(line, manual=manual)
-
-                if reason:
-                    _logger.info(
-                        '[STONE WORKSHOP SALE] No se crea OT para línea %s (%s): %s',
-                        line.id,
-                        line.product_id.display_name if line.product_id else 'Sin producto',
-                        reason,
-                    )
-
-                    if line.stone_workshop_order_id:
-                        created_orders |= line.stone_workshop_order_id
-
-                    continue
-
-                if not manual and not line._stone_workshop_needs_supply():
-                    _logger.info(
-                        '[STONE WORKSHOP SALE] Línea %s no requiere abastecimiento según trigger.',
-                        line.id,
-                    )
-                    continue
-
-                vals = order._stone_workshop_get_workshop_vals(line)
-                workshop = WorkshopOrder.create(vals)
-
-                line.with_context(skip_stone_workshop_product_defaults=True).write({
-                    'stone_workshop_order_id': workshop.id,
-                })
-
-                line._stone_workshop_push_input_selections_to_workshop(workshop)
-
-                created_orders |= workshop
-
-                body = _(
-                    'Se creó la orden de taller '
-                    '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
-                    'para producir <strong>%(final)s</strong> desde <strong>%(base)s</strong>.'
-                ) % {
-                    'id': workshop.id,
-                    'name': workshop.name,
-                    'final': line.product_id.display_name,
-                    'base': line.stone_workshop_base_product_id.display_name,
-                }
-
-                order.message_post(body=body)
-                workshop.message_post(
-                    body=_('Origen comercial: %s, línea %s.') % (
-                        order.name,
-                        line.display_name,
-                    )
-                )
-
-                _logger.info(
-                    '[STONE WORKSHOP SALE] Created workshop %s for sale %s line %s',
-                    workshop.name,
-                    order.name,
-                    line.id,
-                )
-
-        return created_orders
-
-    # -------------------------------------------------------------------------
-    # Botones
-    # -------------------------------------------------------------------------
-
-    def action_create_stone_workshop_orders(self):
-        for order in self:
-            if order.state not in ('sale', 'done'):
-                raise UserError(_(
-                    'Solo puedes crear órdenes de taller desde una orden de venta confirmada.'
-                ))
-
-        candidate_lines = self._stone_workshop_manual_candidate_lines()
-
-        if not candidate_lines:
-            details = []
-
-            for order in self:
-                for line in order.order_line:
-                    reason = order._stone_workshop_line_skip_reason(line, manual=True)
-                    product_name = (
-                        line.product_id.display_name
-                        if line.product_id
-                        else _('Sin producto')
-                    )
-                    details.append('- %s: %s' % (product_name, reason or _('apta')))
-
-            raise UserError(_(
-                'No se encontró ninguna línea apta para crear OT de taller.\n\n'
-                'Revisa estas condiciones:\n'
-                '- La orden debe estar confirmada.\n'
-                '- La línea debe tener producto almacenable/consumible.\n'
-                '- Requiere taller debe estar activo.\n'
-                '- Debe tener producto base.\n'
-                '- Debe tener proceso de taller.\n'
-                '- No debe tener ya una OT vinculada.\n\n'
-                'Diagnóstico:\n%s'
-            ) % '\n'.join(details))
-
-        created = self._stone_workshop_create_missing_orders(force_lines=candidate_lines)
-
-        if not created:
-            raise UserError(_(
-                'No se creó ninguna orden de taller. '
-                'Las líneas parecen aptas, pero no se generó registro. '
-                'Revisa permisos de workshop.order o reglas de seguridad.'
-            ))
-
-        if len(self) == 1:
-            return self.action_view_stone_workshop_orders()
-
-        return True
-
-    def action_sync_workshop_input_selections(self):
-        for order in self:
-            for line in order.order_line.filtered(lambda l: l.stone_workshop_order_id):
-                line._stone_workshop_push_input_selections_to_workshop(line.stone_workshop_order_id)
-        return True
-
-    def action_view_stone_workshop_orders(self):
-        self.ensure_one()
-
-        action = {
-            'type': 'ir.actions.act_window',
-            'name': _('Órdenes de Taller'),
-            'res_model': 'workshop.order',
-            'view_mode': 'list,form',
-            'domain': [('sale_order_id', '=', self.id)],
-            'context': {
-                'default_sale_order_id': self.id,
-            },
-        }
-
-        if self.stone_workshop_order_count == 1:
-            action.update({
-                'view_mode': 'form',
-                'res_id': self.stone_workshop_order_ids.id,
-            })
-
-        return action
-```
-
 ## ./models/sale_workshop_input_selection.py
 ```py
 # -*- coding: utf-8 -*-
@@ -2278,6 +2278,19 @@ class WorkshopOrder(models.Model):
             'skip_stock_lot_duplicate_check': True,
         }
 
+    def _sale_workshop_reservation_context(self):
+        """
+        Contexto exclusivo para crear reservas exactas de placas base.
+
+        Evita que stock_whole_lot_removal u otra estrategia automática intente
+        reservar lotes antes de que esta integración cree sus move lines exactas.
+        """
+        ctx = dict(self._sale_workshop_stock_context())
+        ctx.update({
+            'skip_whole_lot_no_assign': True,
+        })
+        return ctx
+
     def _sale_workshop_move_line_qty_vals(self, qty):
         StockMoveLine = self.env['stock.move.line']
 
@@ -2447,6 +2460,132 @@ class WorkshopOrder(models.Model):
 
         return True
 
+    def _sale_workshop_move_line_reserved_qty(self, move_line):
+        qty = 0.0
+
+        if 'quantity' in move_line._fields:
+            qty = move_line.quantity or 0.0
+        elif 'reserved_uom_qty' in move_line._fields:
+            qty = move_line.reserved_uom_qty or 0.0
+        elif 'qty_done' in move_line._fields:
+            qty = move_line.qty_done or 0.0
+
+        if move_line.product_uom_id and move_line.product_id and move_line.product_id.uom_id:
+            qty = move_line.product_uom_id._compute_quantity(
+                qty,
+                move_line.product_id.uom_id,
+                rounding_method='HALF-UP',
+            )
+
+        return qty
+
+    def _sale_workshop_expected_reserved_qty_for_quant(self, quant):
+        """
+        Calcula cuánto debería estar reservado según stock.move.line activas.
+
+        Si stock.quant.reserved_quantity es mayor a esto, existe reserva huérfana.
+        Si es menor, hay move lines activas que no se reflejaron correctamente.
+        """
+        StockMoveLine = self.env['stock.move.line'].sudo()
+
+        domain = [
+            ('product_id', '=', quant.product_id.id),
+            ('location_id', '=', quant.location_id.id),
+            ('move_id.state', 'not in', ('done', 'cancel')),
+        ]
+
+        if quant.lot_id:
+            domain.append(('lot_id', '=', quant.lot_id.id))
+        else:
+            domain.append(('lot_id', '=', False))
+
+        if 'package_id' in StockMoveLine._fields:
+            if quant.package_id:
+                domain.append(('package_id', '=', quant.package_id.id))
+            else:
+                domain.append(('package_id', '=', False))
+
+        if 'owner_id' in StockMoveLine._fields:
+            if quant.owner_id:
+                domain.append(('owner_id', '=', quant.owner_id.id))
+            else:
+                domain.append(('owner_id', '=', False))
+
+        qty = 0.0
+        for move_line in StockMoveLine.search(domain):
+            qty += self._sale_workshop_move_line_reserved_qty(move_line)
+
+        return qty
+
+    def _sale_workshop_reconcile_reserved_quants_for_input_lines(self, input_lines=False):
+        """
+        Repara stock.quant.reserved_quantity contra las move lines reales.
+
+        Corrige casos como:
+            total=6.17
+            reserved=12.34
+            own_reserved=6.17
+
+        donde el quant quedó duplicado aunque solo existe una reserva real activa.
+        """
+        self.ensure_one()
+
+        Quant = self.env['stock.quant'].sudo()
+        input_lines = input_lines or self._sale_workshop_input_lines_to_reserve()
+
+        seen_quant_ids = set()
+
+        for input_line in input_lines:
+            if not input_line.product_id or not input_line.lot_id:
+                continue
+
+            location = input_line.location_id or self.location_src_id
+            if not location:
+                continue
+
+            domain = [
+                ('product_id', '=', input_line.product_id.id),
+                ('lot_id', '=', input_line.lot_id.id),
+                ('location_id', 'child_of', location.id),
+            ]
+
+            for quant in Quant.search(domain):
+                if quant.id in seen_quant_ids:
+                    continue
+
+                seen_quant_ids.add(quant.id)
+
+                current_reserved = quant.reserved_quantity or 0.0
+                expected_reserved = self._sale_workshop_expected_reserved_qty_for_quant(quant)
+
+                rounding = (
+                    quant.product_id.uom_id.rounding
+                    if quant.product_id and quant.product_id.uom_id
+                    else 0.00001
+                )
+
+                if float_compare(
+                    current_reserved,
+                    expected_reserved,
+                    precision_rounding=rounding,
+                ) != 0:
+                    _logger.warning(
+                        '[STONE WORKSHOP SALE STOCK] Corrigiendo reserved_quantity inconsistente. '
+                        'order=%s product=%s lot=%s location=%s current=%s expected=%s',
+                        self.name,
+                        quant.product_id.display_name,
+                        quant.lot_id.name if quant.lot_id else '',
+                        quant.location_id.display_name,
+                        current_reserved,
+                        expected_reserved,
+                    )
+
+                    quant.write({
+                        'reserved_quantity': max(expected_reserved, 0.0),
+                    })
+
+        return True
+
     def _sale_workshop_create_reservation_picking(self, input_lines):
         """
         Crea el picking interno de reserva para placas base seleccionadas desde venta.
@@ -2474,15 +2613,17 @@ class WorkshopOrder(models.Model):
             raise UserError(_('Define ubicación origen y ubicación taller antes de reservar placas.'))
 
         self._sale_workshop_cleanup_stale_reservations(input_lines=input_lines)
+        self._sale_workshop_reconcile_reserved_quants_for_input_lines(input_lines=input_lines)
 
         picking_type = self._get_internal_picking_type()
         bypass_ctx = self._sale_workshop_stock_context()
+        reservation_ctx = self._sale_workshop_reservation_context()
 
         origin = '%s - Reserva taller' % (self.name or '')
         if self.sale_order_id:
             origin = '%s / %s - Reserva taller' % (self.sale_order_id.name, self.name)
 
-        picking = self.env['stock.picking'].with_context(**bypass_ctx).create({
+        picking = self.env['stock.picking'].with_context(**reservation_ctx).create({
             'picking_type_id': picking_type.id,
             'location_id': self.location_src_id.id,
             'location_dest_id': self.location_workshop_id.id,
@@ -2514,15 +2655,15 @@ class WorkshopOrder(models.Model):
 
             move_vals.update(self._sale_workshop_move_qty_vals(line.product_id, line.qty_in))
 
-            move = StockMove.with_context(**bypass_ctx).create(move_vals)
+            move = StockMove.with_context(**reservation_ctx).create(move_vals)
             moves |= move
             move_specs.append((move, line, source_location))
 
         if moves:
             try:
-                moves.with_context(**bypass_ctx)._action_confirm(merge=False)
+                moves.with_context(**reservation_ctx)._action_confirm(merge=False)
             except TypeError:
-                moves.with_context(**bypass_ctx)._action_confirm()
+                moves.with_context(**reservation_ctx)._action_confirm()
 
         # CLAVE: liberar de verdad las reservas automáticas.
         # No basta unlink() de las move lines: bajo el contexto bypass los
@@ -2538,6 +2679,7 @@ class WorkshopOrder(models.Model):
                 picking.name,
             )
         moves._do_unreserve()
+        self._sale_workshop_reconcile_reserved_quants_for_input_lines(input_lines=input_lines)
 
         created_move_lines = self.env['stock.move.line']
 
@@ -2559,10 +2701,26 @@ class WorkshopOrder(models.Model):
             if 'product_uom_id' in StockMoveLine._fields:
                 ml_vals['product_uom_id'] = line.product_id.uom_id.id
 
-            ml_vals.update(self._sale_workshop_move_line_qty_vals(line.qty_in))
+            qty_to_reserve = line.qty_in or 0.0
 
-            move_line = StockMoveLine.with_context(**bypass_ctx).create(ml_vals)
+            # Reserva real del quant antes de crear la move line exacta.
+            # Si algún hook adicional duplica reserved_quantity, el reconcile
+            # posterior lo corrige contra las move lines activas.
+            if qty_to_reserve > 0.0:
+                self.env['stock.quant'].sudo()._update_reserved_quantity(
+                    line.product_id,
+                    source_location,
+                    qty_to_reserve,
+                    lot_id=line.lot_id,
+                    strict=False,
+                )
+
+            ml_vals.update(self._sale_workshop_move_line_qty_vals(qty_to_reserve))
+
+            move_line = StockMoveLine.with_context(**reservation_ctx).create(ml_vals)
             created_move_lines |= move_line
+
+        self._sale_workshop_reconcile_reserved_quants_for_input_lines(input_lines=input_lines)
 
         _logger.info(
             '[STONE WORKSHOP SALE] Reserva exacta creada para %s. Moves=%s MoveLines=%s',
@@ -2743,6 +2901,7 @@ class WorkshopOrder(models.Model):
         # Limpia reservas obsoletas antes de calcular, porque reserved_quantity
         # puede venir inflado por pickings anteriores del mismo flujo.
         self._sale_workshop_cleanup_stale_reservations(input_lines=input_line)
+        self._sale_workshop_reconcile_reserved_quants_for_input_lines(input_lines=input_line)
 
         quant_data = self._sale_workshop_quant_qty_for_lot(
             input_line.product_id,
