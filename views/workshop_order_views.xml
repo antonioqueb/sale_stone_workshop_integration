@@ -6,7 +6,7 @@
         <field name="inherit_id" ref="stone_workshop.view_workshop_order_form"/>
         <field name="arch" type="xml">
             <xpath expr="//header" position="inside">
-                <button name="action_reserve_inputs_for_sale"
+                <!-- <button name="action_reserve_inputs_for_sale"
                         string="Reservar placas venta"
                         type="object"
                         class="btn-secondary"
@@ -14,7 +14,7 @@
                 <button name="action_release_sale_reservation"
                         string="Liberar reserva"
                         type="object"
-                        invisible="not sale_workshop_reserved or state not in ('draft', 'validated', 'confirmed')"/>
+                        invisible="not sale_workshop_reserved or state not in ('draft', 'validated', 'confirmed')"/> -->
                 <button name="action_assign_outputs_to_sale"
                         string="Asignar a pedido"
                         type="object"
