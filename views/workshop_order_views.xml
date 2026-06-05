@@ -51,6 +51,12 @@
                 <field name="sale_partner_id" readonly="1"/>
                 <field name="sale_requested_qty" readonly="1"/>
                 <field name="sale_workshop_reserved" invisible="1"/>
+                <field name="stone_workshop_chain_sequence" readonly="1"
+                       invisible="not sale_order_id"/>
+                <field name="stone_workshop_chain_prev_order_id" readonly="1"
+                       invisible="not stone_workshop_chain_prev_order_id"/>
+                <field name="stone_workshop_chain_next_order_id" readonly="1"
+                       invisible="not stone_workshop_chain_next_order_id"/>
             </xpath>
 
             <xpath expr="//field[@name='input_line_ids']/list/field[@name='reserved_origin']" position="after">

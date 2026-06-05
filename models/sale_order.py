@@ -92,8 +92,29 @@ class SaleOrder(models.Model):
     # Preparación de valores
     # -------------------------------------------------------------------------
 
-    def _stone_workshop_get_workshop_vals(self, line):
+    def _stone_workshop_get_workshop_vals(
+        self,
+        line,
+        input_product=None,
+        output_product=None,
+        process=None,
+        sequence=1,
+    ):
+        """Prepara los valores de una orden de taller para un paso de la cadena.
+
+        Por defecto usa el proceso/producto base/producto vendido de la línea
+        (paso único, comportamiento original). Para cadenas se pasa el producto
+        de entrada (intermedio que consume), el de salida (intermedio que produce
+        o producto vendido en el último paso), el proceso y la posición.
+        """
         self.ensure_one()
+
+        if process is None:
+            process = line.stone_workshop_process_id
+        if input_product is None:
+            input_product = line.stone_workshop_base_product_id
+        if output_product is None:
+            output_product = line.product_id
 
         warehouse = (
             self.warehouse_id
@@ -109,24 +130,28 @@ class SaleOrder(models.Model):
             '<li>Pedido: %(sale)s</li>'
             '<li>Línea: %(line)s</li>'
             '<li>Producto vendido/final: %(final)s</li>'
-            '<li>Producto base a apartar: %(base)s</li>'
+            '<li>Paso de taller: %(sequence)s</li>'
+            '<li>Producto que consume: %(base)s</li>'
+            '<li>Producto que produce: %(out)s</li>'
             '<li>Proceso: %(process)s</li>'
             '</ul>'
         ) % {
             'sale': self.name or '',
             'line': line.name or line.product_id.display_name or '',
             'final': line.product_id.display_name or '',
-            'base': line.stone_workshop_base_product_id.display_name or '',
-            'process': line.stone_workshop_process_id.display_name or '',
+            'sequence': sequence,
+            'base': input_product.display_name or '',
+            'out': output_product.display_name or '',
+            'process': process.display_name or '',
         }
 
         vals = {
             'sale_order_id': self.id,
             'sale_line_id': line.id,
             'operation_mode': line.stone_workshop_operation_mode or 'slab_finish',
-            'process_id': line.stone_workshop_process_id.id,
-            'input_product_id': line.stone_workshop_base_product_id.id,
-            'default_product_out_id': line.product_id.id,
+            'process_id': process.id,
+            'input_product_id': input_product.id,
+            'default_product_out_id': output_product.id,
             'production_target_sqm': line.product_uom_qty or 0.0,
             'target_pieces': 1,
             'warehouse_id': warehouse.id if warehouse else False,
@@ -139,6 +164,7 @@ class SaleOrder(models.Model):
                 else False
             ),
             'notes': notes,
+            'stone_workshop_chain_sequence': sequence,
         }
 
         return vals
@@ -244,44 +270,104 @@ class SaleOrder(models.Model):
                     )
                     continue
 
-                vals = order._stone_workshop_get_workshop_vals(line)
-                workshop = WorkshopOrder.create(vals)
+                chain_orders = order._stone_workshop_create_chain_for_line(line)
 
-                line.with_context(skip_stone_workshop_product_defaults=True).write({
-                    'stone_workshop_order_id': workshop.id,
-                })
+                if not chain_orders:
+                    continue
 
-                line._stone_workshop_push_input_selections_to_workshop(workshop)
+                created_orders |= chain_orders
+                first_order = chain_orders[0]
 
-                created_orders |= workshop
-
-                body = _(
-                    'Se creó la orden de taller '
-                    '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
-                    'para producir <strong>%(final)s</strong> desde <strong>%(base)s</strong>.'
-                ) % {
-                    'id': workshop.id,
-                    'name': workshop.name,
-                    'final': line.product_id.display_name,
-                    'base': line.stone_workshop_base_product_id.display_name,
-                }
+                if len(chain_orders) == 1:
+                    body = _(
+                        'Se creó la orden de taller '
+                        '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
+                        'para producir <strong>%(final)s</strong> desde <strong>%(base)s</strong>.'
+                    ) % {
+                        'id': first_order.id,
+                        'name': first_order.name,
+                        'final': line.product_id.display_name,
+                        'base': line.stone_workshop_base_product_id.display_name,
+                    }
+                else:
+                    body = _(
+                        'Se creó una cadena de %(count)s órdenes de taller para producir '
+                        '<strong>%(final)s</strong>: %(chain)s.'
+                    ) % {
+                        'count': len(chain_orders),
+                        'final': line.product_id.display_name,
+                        'chain': ' → '.join(chain_orders.mapped('name')),
+                    }
 
                 order.message_post(body=body)
-                workshop.message_post(
-                    body=_('Origen comercial: %s, línea %s.') % (
-                        order.name,
-                        line.display_name,
+
+                for workshop in chain_orders:
+                    workshop.message_post(
+                        body=_('Origen comercial: %s, línea %s (paso %s/%s).') % (
+                            order.name,
+                            line.display_name,
+                            workshop.stone_workshop_chain_sequence,
+                            len(chain_orders),
+                        )
                     )
-                )
 
                 _logger.info(
-                    '[STONE WORKSHOP SALE] Created workshop %s for sale %s line %s',
-                    workshop.name,
+                    '[STONE WORKSHOP SALE] Created workshop chain %s for sale %s line %s',
+                    chain_orders.mapped('name'),
                     order.name,
                     line.id,
                 )
 
         return created_orders
+
+    def _stone_workshop_create_chain_for_line(self, line):
+        """Crea la cadena de órdenes de taller para una línea de venta.
+
+        Crea una OT por cada paso de ``line._stone_workshop_chain_steps()`` y las
+        enlaza (prev/next). El primer paso consume el producto origen (se le
+        empujan las placas seleccionadas y se reserva); los pasos intermedios se
+        crean en borrador a la espera de que el paso anterior declare su resultado
+        y los alimente automáticamente.
+        """
+        self.ensure_one()
+
+        WorkshopOrder = self.env['workshop.order']
+        chain_orders = WorkshopOrder
+        prev_order = WorkshopOrder
+
+        steps = line._stone_workshop_chain_steps()
+
+        for step in steps:
+            vals = self._stone_workshop_get_workshop_vals(
+                line,
+                input_product=step['input_product'],
+                output_product=step['output_product'],
+                process=step['process'],
+                sequence=step['sequence'],
+            )
+
+            if step['process_line']:
+                vals['stone_workshop_process_line_id'] = step['process_line'].id
+
+            workshop = WorkshopOrder.create(vals)
+
+            if prev_order:
+                prev_order.write({'stone_workshop_chain_next_order_id': workshop.id})
+                workshop.write({'stone_workshop_chain_prev_order_id': prev_order.id})
+
+            if step['sequence'] == 1:
+                # Paso principal: vincula la línea y empuja las placas seleccionadas.
+                line.with_context(skip_stone_workshop_product_defaults=True).write({
+                    'stone_workshop_order_id': workshop.id,
+                })
+                line._stone_workshop_push_input_selections_to_workshop(workshop)
+            elif step['process_line']:
+                step['process_line'].write({'workshop_order_id': workshop.id})
+
+            chain_orders |= workshop
+            prev_order = workshop
+
+        return chain_orders
 
     # -------------------------------------------------------------------------
     # Botones

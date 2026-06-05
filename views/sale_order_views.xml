@@ -7,14 +7,6 @@
         <field name="priority">120</field>
         <field name="arch" type="xml">
 
-            <xpath expr="//header" position="inside">
-                <button name="action_sync_workshop_input_selections"
-                        string="Sincronizar placas taller"
-                        type="object"
-                        class="btn-secondary"
-                        invisible="state not in ('sale', 'done') or stone_workshop_input_selection_count == 0"/>
-            </xpath>
-
             <xpath expr="//div[@name='button_box']" position="inside">
                 <button name="action_view_stone_workshop_orders"
                         type="object"
@@ -34,127 +26,74 @@
                        widget="boolean_toggle"
                        optional="show"/>
 
-                <field name="stone_workshop_assignment_state"
-                       string="Estado taller"
-                       optional="show"
-                       widget="badge"
-                       decoration-info="stone_workshop_assignment_state in ('pending_inputs', 'outputs_pending')"
-                       decoration-warning="stone_workshop_assignment_state in ('reserved_inputs', 'in_workshop')"
-                       decoration-success="stone_workshop_assignment_state == 'assigned'"
-                       decoration-muted="stone_workshop_assignment_state in ('none', 'cancelled')"/>
+                <field name="stone_workshop_base_product_id"
+                       string="Producto origen"
+                       optional="show"/>
+
+                <field name="stone_workshop_process_id"
+                       string="Proceso taller"
+                       optional="show"/>
 
                 <field name="stone_workshop_input_selector_anchor"
                        string="Placas base"
                        widget="sale_workshop_input_selector"
                        readonly="1"/>
 
-                <field name="stone_workshop_input_selection_count"
-                       string="# Base"
-                       optional="hide"
-                       readonly="1"/>
-
-                <field name="stone_workshop_input_selection_total_qty"
-                       string="M² Base"
-                       optional="hide"
-                       readonly="1"/>
-
-                <field name="stone_workshop_base_product_id"
-                       string="Producto base"
-                       optional="hide"/>
-
-                <field name="stone_workshop_process_id"
-                       string="Proceso taller"
-                       optional="hide"/>
-
-                <field name="stone_workshop_order_id"
-                       string="OT taller"
+                <field name="stone_workshop_process_chain_count"
+                       string="# Procesos"
                        optional="show"
                        readonly="1"/>
 
-                <field name="stone_workshop_auto_create" column_invisible="True"/>
-                <field name="stone_workshop_operation_mode" column_invisible="True"/>
-                <field name="stone_workshop_trigger" column_invisible="True"/>
-                <field name="stone_workshop_commercial_mode" column_invisible="True"/>
-                <field name="stone_workshop_service_product_id" column_invisible="True"/>
-                <field name="stone_is_workshop_service_line" column_invisible="True"/>
-                <field name="stone_workshop_parent_line_id" column_invisible="True"/>
-                <field name="stone_workshop_hide_from_customer" column_invisible="True"/>
+                <button name="action_open_stone_workshop_process_chain"
+                        type="object"
+                        string="Procesos adicionales"
+                        icon="fa-list-ol"
+                        class="btn-link"
+                        invisible="not stone_workshop_required"/>
 
             </xpath>
 
-            <xpath expr="//notebook" position="inside">
+        </field>
+    </record>
 
-                <page string="Taller"
-                      name="stone_workshop_orders"
-                      invisible="stone_workshop_order_count == 0">
-
-                    <group>
-                        <group>
-                            <field name="stone_workshop_order_count" readonly="1"/>
-                            <field name="stone_workshop_pending_count" readonly="1"/>
-                        </group>
-                    </group>
-
-                    <field name="stone_workshop_order_ids" readonly="1">
-                        <list decoration-success="state == 'done'"
-                              decoration-warning="state == 'in_workshop'"
-                              decoration-muted="state == 'cancel'">
-
-                            <field name="name"/>
-                            <field name="sale_line_id"/>
-                            <field name="input_product_id"/>
-                            <field name="default_product_out_id"/>
-                            <field name="process_id"/>
-                            <field name="area_in_total"/>
-                            <field name="area_out_total"/>
-                            <field name="sale_workshop_reserved" widget="boolean_toggle"/>
-                            <field name="state" widget="badge"/>
-
-                        </list>
-                    </field>
-                </page>
-
-                <page string="Placas base taller"
-                      name="stone_workshop_input_selections"
-                      invisible="state == 'cancel' or stone_workshop_input_selection_count == 0">
-
-                    <group>
-                        <group>
-                            <field name="stone_workshop_input_selection_count" readonly="1"/>
-                            <field name="stone_workshop_input_selection_total_qty" readonly="1"/>
-                        </group>
-                    </group>
-
+    <record id="view_sale_order_line_workshop_chain_form" model="ir.ui.view">
+        <field name="name">sale.order.line.workshop.chain.form</field>
+        <field name="model">sale.order.line</field>
+        <field name="arch" type="xml">
+            <form string="Procesos adicionales de taller">
+                <sheet>
                     <div class="alert alert-info" role="alert">
-                        Esta sección muestra las placas, formatos o retazos del <strong>producto base</strong>
-                        que serán consumidos por taller para fabricar el producto final vendido al cliente.
-                        No son los lotes finales de entrega.
+                        Define la cadena de procesos de taller. El primer proceso consume el
+                        <strong>producto origen</strong>; cada proceso adicional consume el producto
+                        intermedio que produjo el paso anterior, y el último paso produce el
+                        <strong>producto vendido</strong>.
                     </div>
 
-                    <field name="stone_workshop_input_selection_ids" readonly="1">
-                        <list decoration-success="state in ('reserved', 'moved_to_workshop')"
-                              decoration-muted="state == 'cancelled'">
+                    <group>
+                        <group>
+                            <field name="product_id" string="Producto vendido" readonly="1"/>
+                            <field name="stone_workshop_base_product_id" string="Producto origen" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="stone_workshop_process_id" string="Proceso principal" readonly="1"/>
+                        </group>
+                    </group>
 
-                            <field name="sale_line_id"/>
-                            <field name="product_final_id"/>
-                            <field name="base_product_id"/>
-                            <field name="lot_id"/>
-                            <field name="location_id"/>
-                            <field name="material_type"/>
-                            <field name="qty_in"/>
-                            <field name="area_sqm"/>
-                            <field name="block_name"/>
-                            <field name="workshop_order_id"/>
-                            <field name="workshop_input_line_id"/>
-                            <field name="consume_picking_id"/>
-                            <field name="state" widget="badge"/>
-
+                    <separator string="Procesos adicionales (en orden)"/>
+                    <field name="stone_workshop_process_line_ids">
+                        <list editable="bottom">
+                            <field name="sequence" widget="handle"/>
+                            <field name="process_id"/>
+                            <field name="input_product_id"/>
+                            <field name="workshop_order_id" readonly="1" optional="show"/>
                         </list>
                     </field>
-                </page>
-
-            </xpath>
-
+                </sheet>
+                <footer>
+                    <button string="Guardar" special="save" class="btn-primary"/>
+                    <button string="Cerrar" special="cancel" class="btn-secondary"/>
+                </footer>
+            </form>
         </field>
     </record>
 </odoo>

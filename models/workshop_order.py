@@ -68,6 +68,33 @@ class WorkshopOrder(models.Model):
         readonly=True,
     )
 
+    stone_workshop_chain_sequence = fields.Integer(
+        string='Paso de la cadena',
+        default=1,
+        copy=False,
+        help='Posición de esta orden dentro de la cadena de procesos de la venta.',
+    )
+    stone_workshop_chain_prev_order_id = fields.Many2one(
+        'workshop.order',
+        string='Paso anterior',
+        copy=False,
+        ondelete='set null',
+        help='Orden de taller cuyo resultado alimenta a esta orden.',
+    )
+    stone_workshop_chain_next_order_id = fields.Many2one(
+        'workshop.order',
+        string='Paso siguiente',
+        copy=False,
+        ondelete='set null',
+        help='Orden de taller que consume el resultado de esta orden.',
+    )
+    stone_workshop_process_line_id = fields.Many2one(
+        'sale.stone.workshop.process.line',
+        string='Proceso adicional de venta',
+        copy=False,
+        ondelete='set null',
+    )
+
     @api.depends('sale_workshop_reservation_picking_id.state')
     def _compute_sale_workshop_reserved(self):
         for order in self:
@@ -998,7 +1025,85 @@ class WorkshopOrder(models.Model):
             self.with_context(**self._sale_workshop_stock_context()),
         ).action_declare_result()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
+        self._stone_workshop_feed_next_chain_orders()
         return res
+
+    def _stone_workshop_feed_next_chain_orders(self):
+        """Alimenta la siguiente orden de la cadena con los lotes producidos.
+
+        Tras declarar el resultado de una orden, toma sus salidas finales (no
+        merma) cuyo producto coincide con el producto que consume la siguiente
+        orden y las crea como líneas de entrada de ésta. Al crearlas sin el
+        contexto de bypass, el override de ``workshop.input.line.create`` dispara
+        la reserva automática (`_sale_workshop_refresh_input_reservation`).
+        """
+        WorkshopInput = self.env['workshop.input.line']
+
+        for order in self:
+            nxt = order.stone_workshop_chain_next_order_id
+
+            if not nxt or nxt.state != 'draft':
+                continue
+
+            if not nxt.input_product_id:
+                continue
+
+            # Si la siguiente orden ya tiene entradas activas, no duplicar.
+            if nxt.input_line_ids.filtered(lambda l: l.state != 'cancelled'):
+                continue
+
+            produced = order.output_line_ids.filtered(
+                lambda o:
+                    o.state in ('produced', 'received')
+                    and o.output_type not in ('scrap', 'rejected')
+                    and o.lot_id
+                    and o.product_id == nxt.input_product_id
+                    and (o.qty_out or 0.0) > 0.0
+            )
+
+            lot_ids = produced.mapped('lot_id').ids
+            if not lot_ids:
+                _logger.info(
+                    '[STONE WORKSHOP SALE] La orden %s no produjo lotes de %s para alimentar %s.',
+                    order.name,
+                    nxt.input_product_id.display_name,
+                    nxt.name,
+                )
+                continue
+
+            nxt._ensure_default_locations()
+
+            vals_list = nxt.prepare_input_line_vals_from_lots(
+                nxt.input_product_id.id,
+                lot_ids,
+                location_id=nxt.location_src_id.id if nxt.location_src_id else False,
+            )
+
+            for vals in vals_list:
+                vals['order_id'] = nxt.id
+                vals.setdefault(
+                    'reserved_origin',
+                    nxt.sale_order_id.name if nxt.sale_order_id else (order.name or ''),
+                )
+                WorkshopInput.create(vals)
+
+            nxt.message_post(
+                body=_(
+                    'Entradas alimentadas automáticamente desde la orden anterior %(prev)s: %(lots)s.'
+                ) % {
+                    'prev': order.name,
+                    'lots': ', '.join(produced.mapped('lot_id.name')),
+                }
+            )
+
+            _logger.info(
+                '[STONE WORKSHOP SALE] Orden %s alimentó %s lote(s) a la siguiente orden %s.',
+                order.name,
+                len(lot_ids),
+                nxt.name,
+            )
+
+        return True
 
     def action_cancel(self):
         for order in self:

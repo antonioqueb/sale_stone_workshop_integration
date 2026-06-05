@@ -1,3 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_sale_stone_workshop_input_selection_user,sale.stone.workshop.input.selection.user,model_sale_stone_workshop_input_selection,base.group_user,1,1,1,0
 access_sale_stone_workshop_input_selection_stock_manager,sale.stone.workshop.input.selection.stock.manager,model_sale_stone_workshop_input_selection,stock.group_stock_manager,1,1,1,1
+access_sale_stone_workshop_process_line_user,sale.stone.workshop.process.line.user,model_sale_stone_workshop_process_line,base.group_user,1,1,1,1
+access_sale_stone_workshop_process_line_stock_manager,sale.stone.workshop.process.line.stock.manager,model_sale_stone_workshop_process_line,stock.group_stock_manager,1,1,1,1

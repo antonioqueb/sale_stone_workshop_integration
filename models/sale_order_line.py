@@ -136,6 +136,22 @@ class SaleOrderLine(models.Model):
         digits=(12, 4),
     )
 
+    stone_workshop_process_line_ids = fields.One2many(
+        'sale.stone.workshop.process.line',
+        'sale_line_id',
+        string='Procesos adicionales',
+        copy=True,
+        help=(
+            'Cadena de procesos de taller adicionales que se aplican después del '
+            'proceso principal. Cada paso consume el producto intermedio que produce '
+            'el paso anterior; el último paso produce el producto vendido.'
+        ),
+    )
+    stone_workshop_process_chain_count = fields.Integer(
+        string='Procesos adicionales',
+        compute='_compute_stone_workshop_process_chain_count',
+    )
+
     stone_is_workshop_service_line = fields.Boolean(
         string='Línea de servicio taller',
         copy=False,
@@ -254,6 +270,76 @@ class SaleOrderLine(models.Model):
             )
             line.stone_workshop_input_selection_count = len(selections)
             line.stone_workshop_input_selection_total_qty = sum(selections.mapped('qty_in'))
+
+    @api.depends('stone_workshop_process_line_ids')
+    def _compute_stone_workshop_process_chain_count(self):
+        for line in self:
+            line.stone_workshop_process_chain_count = len(line.stone_workshop_process_line_ids)
+
+    # -------------------------------------------------------------------------
+    # Cadena de procesos adicionales de taller
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_chain_steps(self):
+        """Devuelve la lista ordenada de pasos de la cadena de taller.
+
+        Cada paso es un dict con: process, input_product, output_product,
+        sequence y process_line (vacío en el paso principal). El producto de
+        salida de cada paso es el producto que consume el siguiente paso, y el
+        último paso produce el producto vendido (``product_id``).
+        """
+        self.ensure_one()
+
+        steps = []
+
+        # Paso 1: proceso principal de la línea (consume el producto origen).
+        steps.append({
+            'process': self.stone_workshop_process_id,
+            'input_product': self.stone_workshop_base_product_id,
+            'process_line': self.env['sale.stone.workshop.process.line'],
+        })
+
+        # Pasos adicionales, ordenados por secuencia.
+        additional = self.stone_workshop_process_line_ids.sorted(
+            key=lambda l: (l.sequence, l.id)
+        )
+        for process_line in additional:
+            steps.append({
+                'process': process_line.process_id,
+                'input_product': process_line.input_product_id,
+                'process_line': process_line,
+            })
+
+        # El producto de salida de cada paso es la entrada del siguiente; el
+        # último paso produce el producto vendido.
+        for index, step in enumerate(steps):
+            step['sequence'] = index + 1
+            if index + 1 < len(steps):
+                step['output_product'] = steps[index + 1]['input_product']
+            else:
+                step['output_product'] = self.product_id
+
+        return steps
+
+    def action_open_stone_workshop_process_chain(self):
+        self.ensure_one()
+
+        if not self.id:
+            raise UserError(_('Guarda la línea antes de configurar procesos adicionales.'))
+        if self.display_type or self.stone_is_workshop_service_line:
+            raise UserError(_('Esta línea no admite procesos de taller.'))
+
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Procesos adicionales de taller'),
+            'res_model': 'sale.order.line',
+            'res_id': self.id,
+            'view_mode': 'form',
+            'view_id': self.env.ref(
+                'sale_stone_workshop_integration.view_sale_order_line_workshop_chain_form'
+            ).id,
+            'target': 'new',
+        }
 
     @api.model
     def _stone_workshop_vals_from_product(self, product):
@@ -869,6 +955,13 @@ class SaleOrderLine(models.Model):
         if lot_name:
             domain.append(('lot_id.name', 'ilike', lot_name))
 
+        # Las placas con hold/apartado comercial activo están bloqueadas y no
+        # pueden seleccionarse como insumo de taller. Es el mismo criterio que el
+        # selector de venta (sale_stone_selection._build_stone_domain), que
+        # excluye x_tiene_hold; aquí faltaba replicarlo.
+        if 'x_tiene_hold' in Quant._fields:
+            domain.append(('x_tiene_hold', '=', False))
+
         current_selection_lot_ids = set(
             self._stone_workshop_active_input_selections().mapped('lot_id').ids
         )
@@ -884,6 +977,22 @@ class SaleOrderLine(models.Model):
         allowed_current_lot_ids = current_lot_ids | current_selection_lot_ids | current_workshop_lot_ids
 
         committed_lot_ids = set(Quant._get_committed_lot_ids(base_product.id))
+
+        # Placas que siguen físicamente en una ubicación interna (in stock) pero
+        # ya están vinculadas a una OT de taller en proceso ("en producción / en
+        # taller") están bloqueadas mientras se transforman y tampoco deben poder
+        # seleccionarse. Se detecta igual que el dashboard visual
+        # (inventory_visual_enhanced._iv_get_workshop_lot_ids), pero de forma
+        # autocontenida para no depender de ese módulo.
+        if 'workshop.input.line' in self.env:
+            workshop_blocked_lines = self.env['workshop.input.line'].sudo().search([
+                ('product_id', '=', base_product.id),
+                ('lot_id', '!=', False),
+                ('state', 'not in', ('cancelled', 'done', 'rejected')),
+                ('order_id.state', '=', 'in_workshop'),
+            ])
+            committed_lot_ids |= set(workshop_blocked_lines.mapped('lot_id').ids)
+
         committed_lot_ids -= allowed_current_lot_ids
 
         quants = Quant.search(domain, order='lot_id, location_id')
