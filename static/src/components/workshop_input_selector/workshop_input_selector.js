@@ -299,6 +299,15 @@ export class SaleWorkshopInputSelector extends Component {
 
                     <div class="swis-footer">
                         <span id="swis-footer-info">—</span>
+                        <div class="swis-pager">
+                            <button class="swis-btn swis-btn-light" id="swis-prev">
+                                <i class="fa fa-chevron-left me-1"></i> Anterior
+                            </button>
+                            <span class="swis-page-info" id="swis-page-info">—</span>
+                            <button class="swis-btn swis-btn-light" id="swis-next">
+                                Siguiente <i class="fa fa-chevron-right ms-1"></i>
+                            </button>
+                        </div>
                         <div class="swis-footer-actions">
                             <button class="swis-btn swis-btn-outline" id="swis-cancel">Cancelar</button>
                             <button class="swis-btn swis-btn-primary-dark" id="swis-confirm-bottom">
@@ -340,10 +349,28 @@ export class SaleWorkshopInputSelector extends Component {
             root.querySelector("#swis-total").textContent = this.fmt(total);
         };
 
+        const updatePager = () => {
+            const prevBtn = root.querySelector("#swis-prev");
+            const nextBtn = root.querySelector("#swis-next");
+            const pageInfo = root.querySelector("#swis-page-info");
+
+            if (!prevBtn || !nextBtn || !pageInfo) {
+                return;
+            }
+
+            const totalPages = Math.max(1, Math.ceil(st.total / PAGE_SIZE));
+
+            prevBtn.disabled = st.isLoading || st.page <= 0;
+            nextBtn.disabled = st.isLoading || st.page >= totalPages - 1;
+            pageInfo.textContent = `Página ${st.page + 1} de ${totalPages}`;
+        };
+
         const render = () => {
             const body = root.querySelector("#swis-body");
             const stat = root.querySelector("#swis-stat");
             const footer = root.querySelector("#swis-footer-info");
+
+            updatePager();
 
             if (st.isLoading && !st.items.length) {
                 body.innerHTML = `
@@ -434,7 +461,9 @@ export class SaleWorkshopInputSelector extends Component {
             `;
 
             stat.textContent = `${st.total} lote(s)`;
-            footer.textContent = `Mostrando ${st.items.length} de ${st.total} lote(s).`;
+            const from = st.total ? st.page * PAGE_SIZE + 1 : 0;
+            const to = st.page * PAGE_SIZE + st.items.length;
+            footer.textContent = `Mostrando ${from}–${to} de ${st.total} lote(s).`;
 
             body.querySelectorAll("tr[data-lot-id]").forEach((tr) => {
                 tr.addEventListener("click", (ev) => {
@@ -568,6 +597,19 @@ export class SaleWorkshopInputSelector extends Component {
 
         root.querySelector("#swis-confirm-top").addEventListener("click", confirm);
         root.querySelector("#swis-confirm-bottom").addEventListener("click", confirm);
+
+        root.querySelector("#swis-prev").addEventListener("click", () => {
+            if (!st.isLoading && st.page > 0) {
+                load(st.page - 1);
+            }
+        });
+
+        root.querySelector("#swis-next").addEventListener("click", () => {
+            const totalPages = Math.max(1, Math.ceil(st.total / PAGE_SIZE));
+            if (!st.isLoading && st.page < totalPages - 1) {
+                load(st.page + 1);
+            }
+        });
 
         root.querySelector("#swis-clear").addEventListener("click", () => {
             st.pendingIds = new Set();
