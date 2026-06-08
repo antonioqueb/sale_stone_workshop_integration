@@ -41,6 +41,12 @@ class WorkshopOrder(models.Model):
         readonly=True,
         store=True,
     )
+    sale_user_id = fields.Many2one(
+        related='sale_order_id.user_id',
+        string='Vendedor',
+        readonly=True,
+        store=True,
+    )
     sale_requested_qty = fields.Float(
         related='sale_line_id.product_uom_qty',
         string='Cantidad solicitada',
@@ -102,6 +108,22 @@ class WorkshopOrder(models.Model):
             order.sale_workshop_reserved = bool(
                 picking and picking.state not in ('cancel', 'done')
             )
+
+    # ------------------------------------------------------------------
+    # Panel del taller: enriquecer la tarjeta con datos comerciales
+    # ------------------------------------------------------------------
+
+    def _workshop_board_payload_extend(self, data):
+        data = super()._workshop_board_payload_extend(data)
+        self.ensure_one()
+        data.update({
+            'sale_order': self.sale_order_id.name or '',
+            'sale_partner': self.sale_partner_id.display_name if self.sale_partner_id else '',
+            'sale_user': self.sale_user_id.name if self.sale_user_id else '',
+            'sale_product': self.sale_product_id.display_name if self.sale_product_id else '',
+            'sale_requested_qty': self.sale_requested_qty or 0.0,
+        })
+        return data
 
     # ------------------------------------------------------------------
     # UI actions

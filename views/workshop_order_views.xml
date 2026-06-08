@@ -49,6 +49,8 @@
                 <field name="sale_order_id" readonly="1"/>
                 <field name="sale_line_id" invisible="1"/>
                 <field name="sale_partner_id" readonly="1"/>
+                <field name="sale_user_id" readonly="1" invisible="not sale_order_id"/>
+                <field name="sale_product_id" readonly="1" invisible="not sale_order_id"/>
                 <field name="sale_requested_qty" readonly="1"/>
                 <field name="sale_workshop_reserved" invisible="1"/>
                 <field name="stone_workshop_chain_sequence" readonly="1"
