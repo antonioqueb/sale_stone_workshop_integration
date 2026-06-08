@@ -28,19 +28,23 @@
 
                 <field name="stone_workshop_base_product_id"
                        string="Producto origen"
+                       invisible="not stone_workshop_required"
                        optional="show"/>
 
                 <field name="stone_workshop_process_id"
                        string="Proceso taller"
+                       invisible="not stone_workshop_required"
                        optional="show"/>
 
                 <field name="stone_workshop_input_selector_anchor"
                        string="Placas base"
                        widget="sale_workshop_input_selector"
+                       invisible="not stone_workshop_required"
                        readonly="1"/>
 
                 <field name="stone_workshop_process_chain_count"
                        string="# Procesos"
+                       invisible="not stone_workshop_required"
                        optional="show"
                        readonly="1"/>
 
