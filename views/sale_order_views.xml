@@ -19,46 +19,52 @@
                 </button>
             </xpath>
 
-            <xpath expr="//field[@name='order_line']/list/field[@name='product_uom_qty']" position="after">
+            <!-- ========================================================= -->
+            <!-- Pestaña Taller: duplica las líneas con la configuración de -->
+            <!-- taller. El grid principal de Líneas de la orden queda      -->
+            <!-- libre de columnas de taller.                               -->
+            <!-- ========================================================= -->
+            <xpath expr="//page[@name='order_lines']" position="after">
+                <page string="Taller" name="workshop_lines" invisible="state != 'sale'">
+                    <field name="order_line" nolabel="1" create="0" delete="0">
+                        <list editable="bottom" create="0" delete="0">
+                            <field name="display_type" column_invisible="True"/>
 
-                <field name="stone_workshop_required"
-                       string="Requiere taller"
-                       widget="boolean_toggle"
-                       optional="hide"/>
+                            <field name="product_template_id" string="Producto" readonly="1"/>
+                            <field name="product_uom_qty" string="Solicitado" readonly="1"/>
 
-                <field name="stone_workshop_base_product_id"
-                       string="Producto origen"
-                       invisible="not stone_workshop_required"
-                       column_invisible="parent.state != 'sale'"
-                       optional="hide"/>
+                            <field name="stone_workshop_required"
+                                   string="Requiere taller"
+                                   widget="boolean_toggle"/>
 
-                <field name="stone_workshop_process_id"
-                       string="Proceso taller"
-                       invisible="not stone_workshop_required"
-                       column_invisible="parent.state != 'sale'"
-                       optional="hide"/>
+                            <field name="stone_workshop_base_product_id"
+                                   string="Producto origen"
+                                   invisible="not stone_workshop_required"/>
 
-                <field name="stone_workshop_input_selector_anchor"
-                       string="Placas base"
-                       widget="sale_workshop_input_selector"
-                       column_invisible="1"
-                       readonly="1"/>
+                            <field name="stone_workshop_process_id"
+                                   string="Proceso taller"
+                                   invisible="not stone_workshop_required"/>
 
-                <field name="stone_workshop_process_chain_count"
-                       string="# Procesos"
-                       invisible="not stone_workshop_required"
-                       column_invisible="parent.state != 'sale'"
-                       optional="hide"
-                       readonly="1"/>
+                            <field name="stone_workshop_input_selector_anchor"
+                                   string="Placas base"
+                                   widget="sale_workshop_input_selector"
+                                   column_invisible="1"
+                                   readonly="1"/>
 
-                <button name="action_open_stone_workshop_process_chain"
-                        type="object"
-                        string="Procesos adicionales"
-                        icon="fa-list-ol"
-                        class="btn-link"
-                        column_invisible="parent.state != 'sale'"
-                        invisible="not stone_workshop_required"/>
+                            <field name="stone_workshop_process_chain_count"
+                                   string="# Procesos"
+                                   invisible="not stone_workshop_required"
+                                   readonly="1"/>
 
+                            <button name="action_open_stone_workshop_process_chain"
+                                    type="object"
+                                    string="Procesos adicionales"
+                                    icon="fa-list-ol"
+                                    class="btn-link"
+                                    invisible="not stone_workshop_required"/>
+                        </list>
+                    </field>
+                </page>
             </xpath>
 
         </field>
