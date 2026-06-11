@@ -24,19 +24,19 @@
                 <field name="stone_workshop_required"
                        string="Requiere taller"
                        widget="boolean_toggle"
-                       optional="show"/>
+                       optional="hide"/>
 
                 <field name="stone_workshop_base_product_id"
                        string="Producto origen"
                        invisible="not stone_workshop_required"
                        column_invisible="parent.state != 'sale'"
-                       optional="show"/>
+                       optional="hide"/>
 
                 <field name="stone_workshop_process_id"
                        string="Proceso taller"
                        invisible="not stone_workshop_required"
                        column_invisible="parent.state != 'sale'"
-                       optional="show"/>
+                       optional="hide"/>
 
                 <field name="stone_workshop_input_selector_anchor"
                        string="Placas base"
@@ -48,7 +48,7 @@
                        string="# Procesos"
                        invisible="not stone_workshop_required"
                        column_invisible="parent.state != 'sale'"
-                       optional="show"
+                       optional="hide"
                        readonly="1"/>
 
                 <button name="action_open_stone_workshop_process_chain"
