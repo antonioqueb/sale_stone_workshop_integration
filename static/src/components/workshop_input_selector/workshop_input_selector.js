@@ -266,7 +266,7 @@ export class SaleWorkshopInputSelector extends Component {
                         </div>
 
                         <div class="swis-filter swis-filter-sm">
-                            <label>Ancho mín.</label>
+                            <label>Largo mín.</label>
                             <input id="swis-f-ancho" type="number" step="0.01"/>
                         </div>
 
@@ -448,7 +448,7 @@ export class SaleWorkshopInputSelector extends Component {
                             <th>Bloque</th>
                             <th>Atado</th>
                             <th class="text-end">Alto</th>
-                            <th class="text-end">Ancho</th>
+                            <th class="text-end">Largo</th>
                             <th class="text-end">Disp.</th>
                             <th>Tipo</th>
                             <th>Color</th>

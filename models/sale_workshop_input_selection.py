@@ -109,7 +109,7 @@ class SaleStoneWorkshopInputSelection(models.Model):
         digits=(12, 4),
     )
     width_cm = fields.Float(
-        string='Ancho',
+        string='Largo',
         digits=(12, 2),
     )
     height_cm = fields.Float(
