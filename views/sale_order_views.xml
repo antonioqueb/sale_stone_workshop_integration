@@ -48,8 +48,7 @@
                             <field name="stone_workshop_input_selector_anchor"
                                    string="Placas base"
                                    widget="sale_workshop_input_selector"
-                                   column_invisible="1"
-                                   readonly="1"/>
+                                   invisible="not stone_workshop_required"/>
 
                             <field name="stone_workshop_process_chain_count"
                                    string="# Procesos"
