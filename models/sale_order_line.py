@@ -399,10 +399,27 @@ class SaleOrderLine(models.Model):
 
         return clean
 
+    # Campos cuyo cambio debe disparar la creación/sincronización automática
+    # de la OT en órdenes ya confirmadas.
+    _STONE_WORKSHOP_SYNC_FIELDS = (
+        'product_id',
+        'product_uom_qty',
+        'stone_workshop_required',
+        'stone_workshop_base_product_id',
+        'stone_workshop_process_id',
+        'stone_workshop_operation_mode',
+        'stone_workshop_auto_create',
+        'stone_workshop_trigger',
+    )
+
     @api.model_create_multi
     def create(self, vals_list):
         vals_list = [self._stone_workshop_prepare_create_vals(vals) for vals in vals_list]
-        return super().create(vals_list)
+        lines = super().create(vals_list)
+        # Línea agregada a una orden YA confirmada: la OT nace sola en cuanto
+        # la línea tiene todo (sin botón manual). En cotización no hace nada.
+        lines._stone_workshop_autosync()
+        return lines
 
     def write(self, vals):
         vals = dict(vals or {})
@@ -424,7 +441,103 @@ class SaleOrderLine(models.Model):
                 for key, value in defaults.items():
                     vals.setdefault(key, value)
 
-        return super().write(vals)
+        res = super().write(vals)
+
+        if any(f in vals for f in self._STONE_WORKSHOP_SYNC_FIELDS):
+            self._stone_workshop_autosync()
+
+        return res
+
+    # -------------------------------------------------------------------------
+    # Auto-creación / sincronización de OT en órdenes confirmadas
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_autosync(self):
+        """En órdenes YA CONFIRMADAS, sin botón manual:
+
+        - Si la línea aún no tiene OT y ya reúne todo lo necesario (requiere
+          taller + producto base + proceso), la OT se crea automáticamente en
+          ese momento — cubre el caso de agregar el servicio de taller DESPUÉS
+          de confirmar la venta (el trigger original solo corría en
+          action_confirm).
+        - Si ya tiene OT, se sincronizan los datos editables mientras la OT
+          siga en borrador (cantidad objetivo, proceso, producto base/final).
+
+        En cotizaciones no hace nada: la OT sigue naciendo al confirmar.
+        """
+        if self.env.context.get('skip_stone_workshop_autosync'):
+            return
+
+        for line in self:
+            order = line.order_id
+            if not order or order.state not in ('sale', 'done'):
+                continue
+            if 'x_is_quote_backup' in order._fields and order.x_is_quote_backup:
+                continue
+            if line.display_type or line.stone_is_workshop_service_line:
+                continue
+
+            if line.stone_workshop_order_id:
+                line._stone_workshop_sync_existing_order()
+                continue
+
+            reason = order._stone_workshop_line_skip_reason(line, manual=True)
+            if reason:
+                _logger.info(
+                    '[STONE WORKSHOP SALE] Autosync: línea %s aún sin OT (%s)',
+                    line.id,
+                    reason,
+                )
+                continue
+
+            _logger.info(
+                '[STONE WORKSHOP SALE] Autosync: creando OT para línea %s '
+                'agregada tras la confirmación de %s',
+                line.id,
+                order.name,
+            )
+            order.with_context(
+                skip_stone_workshop_autosync=True,
+            )._stone_workshop_create_missing_orders(force_lines=line)
+
+    def _stone_workshop_sync_existing_order(self):
+        """Mantiene la OT en borrador alineada con la línea de venta."""
+        self.ensure_one()
+        workshop_order = self.stone_workshop_order_id
+
+        if not workshop_order or workshop_order.state != 'draft':
+            return
+
+        vals = {}
+
+        target = self.product_uom_qty or 0.0
+        if abs((workshop_order.production_target_sqm or 0.0) - target) > 0.0001:
+            vals['production_target_sqm'] = target
+
+        process = self.stone_workshop_process_id
+        if process and workshop_order.process_id != process:
+            vals['process_id'] = process.id
+
+        base_product = self.stone_workshop_base_product_id
+        if base_product and workshop_order.input_product_id != base_product:
+            vals['input_product_id'] = base_product.id
+
+        if (
+            self.product_id
+            and 'default_product_out_id' in workshop_order._fields
+            and workshop_order.default_product_out_id != self.product_id
+        ):
+            vals['default_product_out_id'] = self.product_id.id
+
+        if vals:
+            _logger.info(
+                '[STONE WORKSHOP SALE] Autosync: OT %s actualizada desde la '
+                'línea %s: %s',
+                workshop_order.display_name,
+                self.id,
+                list(vals.keys()),
+            )
+            workshop_order.write(vals)
 
     def _stone_workshop_line_qty_done_or_reserved(self):
         self.ensure_one()

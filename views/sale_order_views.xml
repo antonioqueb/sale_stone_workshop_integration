@@ -25,7 +25,10 @@
             <!-- libre de columnas de taller.                               -->
             <!-- ========================================================= -->
             <xpath expr="//page[@name='order_lines']" position="after">
-                <page string="Taller" name="workshop_lines" invisible="state != 'sale'">
+                <!-- Visible desde la COTIZACIÓN: el proceso/producto base se
+                     captura antes de confirmar; la OT nace al confirmar (o al
+                     completar los datos si la orden ya está confirmada). -->
+                <page string="Taller" name="workshop_lines" invisible="state not in ('draft', 'sent', 'sale')">
                     <field name="order_line" nolabel="1" create="0" delete="0">
                         <list editable="bottom" create="0" delete="0">
                             <field name="display_type" column_invisible="True"/>
