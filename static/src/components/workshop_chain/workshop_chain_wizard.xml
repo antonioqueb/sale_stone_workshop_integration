@@ -1,0 +1,342 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <!-- ================= Banda de validación ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainValidationBanner">
+        <div class="o_sw_banner" t-att-class="bannerData.cssClass" role="status">
+            <i class="fa fa-lg" t-att-class="bannerData.icon" title="Estado de la cadena"/>
+            <div class="o_sw_banner_text">
+                <div class="o_sw_banner_title" t-out="bannerData.title"/>
+                <div class="o_sw_banner_desc" t-out="bannerData.description"/>
+            </div>
+        </div>
+    </t>
+
+    <!-- ================= Nodos del diagrama ================= -->
+    <t t-name="sale_stone_workshop_integration.ProductNode">
+        <div class="o_sw_node o_sw_node_product"
+             t-att-class="(props.product ? 'o_sw_' + props.kind : 'o_sw_missing') + (props.highlighted ? ' o_sw_highlighted' : '')">
+            <span class="o_sw_node_tag" t-out="props.tag"/>
+            <span class="o_sw_node_name"
+                  t-out="props.product ? props.product.name : 'Sin definir'"/>
+        </div>
+    </t>
+
+    <t t-name="sale_stone_workshop_integration.ProcessNode">
+        <div class="o_sw_node o_sw_node_process"
+             t-att-class="(props.selected ? 'o_sw_selected' : '') + (props.row.issues.length ? ' o_sw_has_issues' : '')"
+             t-on-click="() => props.onSelect(props.row.key)">
+            <div class="o_sw_node_tag">
+                Paso <t t-out="props.row.position"/>
+                <span t-if="props.row.type === 'main'" class="badge text-bg-primary ms-1">Principal</span>
+                <span t-else="" class="badge text-bg-light text-dark ms-1">Adicional</span>
+            </div>
+            <div class="o_sw_node_name"
+                 t-out="props.row.processName || 'Sin proceso'"
+                 t-att-class="props.row.processName ? '' : 'o_sw_missing_text'"/>
+            <div t-if="props.row.ot" class="o_sw_node_ot">
+                <i t-if="props.row.locked" class="fa fa-lock me-1" t-att-title="props.row.lockReason"/>
+                <span t-out="props.row.ot.name"/> · <span t-out="props.row.ot.state_label"/>
+            </div>
+        </div>
+    </t>
+
+    <!-- ================= Diagrama ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainDiagram">
+        <div class="o_sw_diagram">
+            <t t-foreach="nodes" t-as="node" t-key="node_index">
+                <span t-if="node_index > 0" class="o_sw_diagram_arrow">
+                    <i class="fa fa-long-arrow-right" role="img" aria-label="flecha"/>
+                </span>
+                <ProductNode t-if="node.nodeType === 'product'"
+                             product="node.product"
+                             kind="node.kind"
+                             tag="node.tag"
+                             highlighted="node.highlighted"/>
+                <ProcessNode t-else=""
+                             row="node.row"
+                             selected="node.selected"
+                             onSelect="props.onSelect"/>
+            </t>
+        </div>
+    </t>
+
+    <!-- ================= Fila de la tabla ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainStepRow">
+        <tr t-att-class="(row.key === props.selectedKey ? 'o_sw_row_selected ' : '') +
+                         (row.issues.some((i) => i.level === 'error') ? 'o_sw_row_error' :
+                          row.issues.length ? 'o_sw_row_warning' : '')"
+            t-att-data-key="row.key"
+            t-on-click="() => props.onSelect(row.key)"
+            t-on-dragover="onDragOver"
+            t-on-drop="onDrop">
+            <td class="o_sw_col_drag">
+                <span t-if="row.reorderable"
+                      class="o_sw_drag_handle"
+                      draggable="true"
+                      t-on-dragstart="onDragStart"
+                      title="Arrastra para reordenar">
+                    <i class="fa fa-bars" role="img" aria-label="reordenar"/>
+                </span>
+                <span t-elif="row.locked"
+                      class="o_sw_drag_disabled"
+                      t-att-title="row.lockReason">
+                    <i class="fa fa-lock" role="img" aria-label="bloqueado"/>
+                </span>
+            </td>
+            <td class="text-center" t-out="row.position"/>
+            <td>
+                <span t-if="row.type === 'main'" class="badge text-bg-primary">Principal</span>
+                <span t-else="" class="badge text-bg-light text-dark border">Adicional</span>
+            </td>
+            <td>
+                <span t-out="row.processName" t-if="row.processName"/>
+                <span t-else="" class="o_sw_missing_text">Sin proceso</span>
+                <i t-if="row.issues.length"
+                   class="fa fa-exclamation-circle ms-2"
+                   t-att-class="row.issues.some((i) => i.level === 'error') ? 'text-danger' : 'text-warning'"
+                   t-att-title="rowIssueText"/>
+            </td>
+            <td class="text-muted">
+                <span t-if="row.receive" t-out="row.receive.name"/>
+                <span t-else="" class="o_sw_missing_text">Sin definir</span>
+            </td>
+            <td>
+                <span t-if="row.deliver" t-out="row.deliver.name"/>
+                <span t-else="" class="o_sw_missing_text">Sin definir</span>
+                <span t-if="row.isLast" class="badge text-bg-success ms-1">Vendido</span>
+            </td>
+            <td>
+                <span t-if="row.ot" t-out="row.ot.name"/>
+                <span t-else="" class="text-muted">—</span>
+            </td>
+            <td>
+                <span t-if="row.ot" class="badge" t-att-class="otBadgeClass"
+                      t-out="row.ot.state_label"/>
+                <span t-else="" class="text-muted">—</span>
+            </td>
+            <td class="o_sw_col_actions text-end">
+                <button type="button"
+                        class="btn btn-sm btn-link p-1"
+                        t-att-disabled="!row.canEdit ? 'disabled' : undefined"
+                        t-att-title="row.canEdit ? 'Editar paso' : row.lockReason"
+                        t-on-click.stop="() => props.onEdit(row.key)">
+                    <i class="fa fa-pencil" role="img" aria-label="editar"/>
+                </button>
+                <button type="button"
+                        class="btn btn-sm btn-link text-danger p-1"
+                        t-if="row.type === 'extra'"
+                        t-att-disabled="!row.canDelete ? 'disabled' : undefined"
+                        t-att-title="row.canDelete ? 'Eliminar paso' : row.lockReason"
+                        t-on-click.stop="() => props.onDelete(row.key)">
+                    <i class="fa fa-trash-o" role="img" aria-label="eliminar"/>
+                </button>
+            </td>
+        </tr>
+    </t>
+
+    <!-- ================= Tabla de pasos ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainStepsTable">
+        <div class="o_sw_table_wrapper">
+            <table class="table table-sm o_sw_steps_table align-middle">
+                <thead>
+                    <tr>
+                        <th class="o_sw_col_drag"/>
+                        <th class="text-center">Orden</th>
+                        <th>Tipo</th>
+                        <th>Proceso</th>
+                        <th>Recibe</th>
+                        <th>Entrega</th>
+                        <th>OT</th>
+                        <th>Estado</th>
+                        <th class="text-end">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <t t-foreach="props.rows" t-as="row" t-key="row.key">
+                        <WorkshopChainStepRow row="row"
+                                              selectedKey="props.selectedKey"
+                                              draggingKey="props.draggingKey"
+                                              onSelect="props.onSelect"
+                                              onEdit="props.onEdit"
+                                              onDelete="props.onDelete"
+                                              onDragStart="props.onDragStart"
+                                              onDrop="props.onDrop"/>
+                    </t>
+                </tbody>
+            </table>
+            <button type="button"
+                    class="btn btn-secondary btn-sm o_sw_add_step"
+                    t-on-click="props.onAdd">
+                + Agregar proceso
+            </button>
+        </div>
+    </t>
+
+    <!-- ================= Panel lateral de edición ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainStepEditor">
+        <div class="o_sw_editor_panel">
+            <div class="o_sw_editor_header">
+                <div class="o_sw_editor_title">
+                    Paso <t t-out="row.position"/>
+                    <span t-if="row.type === 'main'" class="badge text-bg-primary ms-1">Principal</span>
+                    <span t-else="" class="badge text-bg-light text-dark border ms-1">Adicional</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-link" t-on-click="props.onClose"
+                        title="Cerrar panel">
+                    <i class="fa fa-times" role="img" aria-label="cerrar"/>
+                </button>
+            </div>
+
+            <div class="o_sw_editor_body">
+                <div t-if="row.locked" class="alert alert-warning py-2 small">
+                    <i class="fa fa-lock me-1" title="Paso bloqueado"/>
+                    <t t-out="row.lockReason"/>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Proceso</label>
+                    <select class="form-select"
+                            t-att-disabled="row.locked ? 'disabled' : undefined"
+                            t-on-change="onProcessChange">
+                        <option value="" t-att-selected="!row.processId ? 'selected' : undefined">
+                            Selecciona un proceso…
+                        </option>
+                        <t t-foreach="props.processes" t-as="process" t-key="process.id">
+                            <option t-att-value="process.id"
+                                    t-att-selected="row.processId === process.id ? 'selected' : undefined"
+                                    t-out="process.name"/>
+                        </t>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Recibe <span class="text-muted small">(calculado)</span></label>
+                    <div class="o_sw_editor_computed" t-att-class="row.receive ? '' : 'o_sw_missing_text'">
+                        <t t-out="row.receive ? row.receive.name : 'Sin definir — establece la Entrega del paso anterior'"/>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Entrega</label>
+                    <div t-if="row.isLast" class="o_sw_editor_computed">
+                        <t t-out="props.line.sold_product ? props.line.sold_product.name : '—'"/>
+                        <span class="badge text-bg-success ms-1">Producto vendido</span>
+                    </div>
+                    <div t-elif="!row.canEditDeliver" class="o_sw_editor_computed o_sw_locked"
+                         t-att-title="row.deliverLockReason">
+                        <i class="fa fa-lock me-1" title="Entrega bloqueada"/>
+                        <t t-out="row.deliver ? row.deliver.name : 'Sin definir'"/>
+                    </div>
+                    <div t-else="">
+                        <div t-if="row.deliver" class="o_sw_editor_chip">
+                            <span t-out="row.deliver.name"/>
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-2"
+                                    t-on-click="clearDeliverProduct" title="Quitar producto">
+                                <i class="fa fa-times" role="img" aria-label="quitar"/>
+                            </button>
+                        </div>
+                        <input type="text"
+                               class="form-control"
+                               placeholder="Buscar producto intermedio…"
+                               t-att-value="state.productTerm"
+                               t-on-input="onProductTermInput"/>
+                        <div t-if="state.productOptions.length" class="o_sw_editor_options list-group mt-1">
+                            <t t-foreach="state.productOptions" t-as="option" t-key="option.id">
+                                <button type="button"
+                                        class="list-group-item list-group-item-action py-1"
+                                        t-on-click="() => this.selectDeliverProduct(option)"
+                                        t-out="option.name"/>
+                            </t>
+                        </div>
+                        <div t-elif="state.searching" class="text-muted small mt-1">Buscando…</div>
+                    </div>
+                </div>
+
+                <div class="text-muted small">
+                    Los cambios se aplican al diagrama de inmediato y se persisten con
+                    <strong>Guardar cadena</strong>.
+                </div>
+            </div>
+        </div>
+    </t>
+
+    <!-- ================= Footer sticky ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainFooter">
+        <div class="o_sw_footer">
+            <div class="o_sw_footer_info">
+                <span><strong t-out="props.stepCount"/> proceso(s)</span>
+                <span class="o_sw_footer_sep">·</span>
+                <span><strong t-out="props.otCount"/> OT(s)</span>
+                <span class="o_sw_footer_sep">·</span>
+                <span class="o_sw_footer_status" t-att-class="'o_sw_status_' + props.validation.status">
+                    <span class="o_sw_status_dot"/>
+                    <t t-out="statusLabel"/>
+                </span>
+            </div>
+            <div class="o_sw_footer_actions">
+                <button type="button" class="btn btn-secondary" t-on-click="props.onDiscard">
+                    Cancelar
+                </button>
+                <button type="button" class="btn btn-primary"
+                        t-att-disabled="!props.canSave ? 'disabled' : undefined"
+                        t-on-click="props.onSave">
+                    Guardar cadena
+                </button>
+            </div>
+        </div>
+    </t>
+
+    <!-- ================= Wizard raíz ================= -->
+    <t t-name="sale_stone_workshop_integration.WorkshopChainWizard">
+        <div class="o_sw_chain_workspace">
+            <div t-if="state.loading" class="o_sw_ws_loading">
+                <i class="fa fa-spinner fa-spin fa-2x" role="img" aria-label="cargando"/>
+            </div>
+            <t t-else="">
+                <WorkshopChainValidationBanner validation="validation"
+                                               summary="validationSummary"/>
+
+                <div class="o_sw_ws_body">
+                    <div class="o_sw_ws_context text-muted small">
+                        <span t-out="state.line.order_name"/> ·
+                        <span t-out="state.line.qty"/> <span t-out="state.line.uom"/> de
+                        <strong t-out="state.line.sold_product ? state.line.sold_product.name : '—'"/>
+                    </div>
+
+                    <WorkshopChainDiagram rows="rows"
+                                          line="state.line"
+                                          selectedKey="state.selectedKey"
+                                          onSelect.bind="selectStep"/>
+
+                    <WorkshopChainStepsTable rows="rows"
+                                             selectedKey="state.selectedKey"
+                                             draggingKey="state.draggingKey"
+                                             onSelect.bind="selectStep"
+                                             onEdit.bind="openEditor"
+                                             onDelete.bind="deleteStep"
+                                             onAdd.bind="addStep"
+                                             onDragStart.bind="onRowDragStart"
+                                             onDrop.bind="onRowDrop"/>
+                </div>
+
+                <WorkshopChainStepEditor t-if="editorRow"
+                                         row="editorRow"
+                                         line="state.line"
+                                         processes="state.processes"
+                                         searchProducts.bind="searchProducts"
+                                         onChangeProcess.bind="changeProcess"
+                                         onChangeDeliver.bind="changeDeliver"
+                                         onClose.bind="closeEditor"/>
+
+                <WorkshopChainFooter validation="validation"
+                                     stepCount="state.steps.length"
+                                     otCount="otCount"
+                                     canSave="canSave"
+                                     onSave.bind="saveChain"
+                                     onDiscard.bind="discard"/>
+            </t>
+        </div>
+    </t>
+
+</templates>

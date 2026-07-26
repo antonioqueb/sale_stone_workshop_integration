@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-from html import escape
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -151,14 +150,6 @@ class SaleOrderLine(models.Model):
     stone_workshop_process_chain_count = fields.Integer(
         string='Procesos adicionales',
         compute='_compute_stone_workshop_process_chain_count',
-    )
-    stone_workshop_chain_preview = fields.Html(
-        string='Vista de la cadena',
-        compute='_compute_stone_workshop_chain_preview',
-        sanitize=False,
-        help='Representación visual de la cadena de procesos: producto origen, '
-             'pasos de taller (con su OT si ya existe) y producto vendido. '
-             'Contenido generado y escapado en servidor; solo lectura.',
     )
 
     stone_is_workshop_service_line = fields.Boolean(
@@ -319,127 +310,6 @@ class SaleOrderLine(models.Model):
         for line in self:
             line.stone_workshop_process_chain_count = len(line.stone_workshop_process_line_ids)
 
-    @api.depends(
-        'stone_workshop_required',
-        'product_id',
-        'stone_workshop_base_product_id',
-        'stone_workshop_process_id',
-        'stone_workshop_order_id.state',
-        'stone_workshop_process_line_ids.sequence',
-        'stone_workshop_process_line_ids.process_id',
-        'stone_workshop_process_line_ids.input_product_id',
-        'stone_workshop_process_line_ids.workshop_order_id.state',
-    )
-    def _compute_stone_workshop_chain_preview(self):
-        """Renderiza la cadena como pipeline visual (HTML de servidor, escapado).
-
-        Se recalcula en vivo dentro del modal al agregar/quitar/reordenar
-        pasos, para que el usuario vea de inmediato qué recibe y qué entrega
-        cada proceso. Ordena las líneas SOLO por sequence (orden estable):
-        en edición los registros pueden ser NewId y no admiten ordenar por id.
-        """
-        state_labels = dict(self.env['workshop.order']._fields['state'].selection)
-        state_badges = {
-            'draft': 'text-bg-secondary',
-            'in_workshop': 'text-bg-warning',
-            'done': 'text-bg-success',
-            'cancel': 'text-bg-danger',
-        }
-
-        def chip(product, kind, tag):
-            if product:
-                return (
-                    '<span class="o_sw_chain_material o_sw_%s">'
-                    '<span class="o_sw_tag">%s</span>%s</span>'
-                ) % (kind, escape(tag), escape(product.display_name or ''))
-            return (
-                '<span class="o_sw_chain_material o_sw_missing">'
-                '<span class="o_sw_tag">%s</span>%s</span>'
-            ) % (escape(tag), escape(_('Sin definir')))
-
-        arrow = (
-            '<span class="o_sw_chain_arrow">'
-            '<i class="fa fa-long-arrow-right" role="img" aria-label="&#8594;" title=""/>'
-            '</span>'
-        )
-
-        for line in self:
-            if (
-                not line.stone_workshop_required
-                or line.display_type
-                or line.stone_is_workshop_service_line
-            ):
-                line.stone_workshop_chain_preview = False
-                continue
-
-            steps = [{
-                'label': _('Paso 1 · Principal'),
-                'process': line.stone_workshop_process_id,
-                'input_product': line.stone_workshop_base_product_id,
-                'workshop': line.stone_workshop_order_id,
-            }]
-            extra_lines = line.stone_workshop_process_line_ids.sorted(
-                key=lambda l: l.sequence or 0
-            )
-            for index, process_line in enumerate(extra_lines, start=2):
-                steps.append({
-                    'label': _('Paso %s') % index,
-                    'process': process_line.process_id,
-                    'input_product': process_line.input_product_id,
-                    'workshop': process_line.workshop_order_id,
-                })
-
-            for index, step in enumerate(steps):
-                if index + 1 < len(steps):
-                    step['output_product'] = steps[index + 1]['input_product']
-                else:
-                    step['output_product'] = line.product_id
-
-            parts = ['<div class="o_sw_chain">']
-            parts.append(chip(line.stone_workshop_base_product_id, 'origin', _('Origen')))
-
-            for index, step in enumerate(steps):
-                parts.append(arrow)
-
-                process = step['process']
-                process_name = (
-                    escape(process.display_name or '')
-                    if process
-                    else escape(_('Sin proceso'))
-                )
-                step_class = 'o_sw_chain_step' + ('' if process else ' o_sw_step_missing')
-
-                ot_html = ''
-                workshop = step['workshop']
-                if workshop and workshop.id:
-                    badge_class = state_badges.get(workshop.state, 'text-bg-secondary')
-                    ot_html = (
-                        '<div class="o_sw_step_ot"><span class="badge %s">%s · %s</span></div>'
-                    ) % (
-                        badge_class,
-                        escape(workshop.name or ''),
-                        escape(state_labels.get(workshop.state, workshop.state or '')),
-                    )
-
-                parts.append(
-                    '<span class="%s">'
-                    '<div class="o_sw_step_seq">%s</div>'
-                    '<div class="o_sw_step_name">%s</div>'
-                    '%s</span>' % (step_class, escape(step['label']), process_name, ot_html)
-                )
-
-                parts.append(arrow)
-
-                is_final = index + 1 == len(steps)
-                parts.append(chip(
-                    step['output_product'],
-                    'final' if is_final else 'intermediate',
-                    _('Vendido') if is_final else _('Intermedio'),
-                ))
-
-            parts.append('</div>')
-            line.stone_workshop_chain_preview = ''.join(parts)
-
     # -------------------------------------------------------------------------
     # Cadena de procesos adicionales de taller
     # -------------------------------------------------------------------------
@@ -494,17 +364,245 @@ class SaleOrderLine(models.Model):
             raise UserError(_('Esta línea no admite procesos de taller.'))
 
         return {
-            'type': 'ir.actions.act_window',
+            'type': 'ir.actions.client',
+            'tag': 'sale_stone_workshop_chain_workspace',
             'name': _('Cadena de procesos de taller'),
-            'res_model': 'sale.order.line',
-            'res_id': self.id,
-            'view_mode': 'form',
-            'view_id': self.env.ref(
-                'sale_stone_workshop_integration.view_sale_order_line_workshop_chain_form'
-            ).id,
             'target': 'new',
-            'context': dict(self.env.context, dialog_size='extra-large'),
+            'params': {'sale_line_id': self.id},
         }
+
+    # -------------------------------------------------------------------------
+    # Workspace OWL de la cadena: datos, guardado y validación
+    # -------------------------------------------------------------------------
+
+    _WORKSHOP_CHAIN_LOCKED_STATES = ('in_workshop', 'done')
+
+    def _workshop_chain_product_payload(self, product):
+        if not product:
+            return False
+        return {'id': product.id, 'name': product.display_name or ''}
+
+    def _workshop_chain_ot_payload(self, workshop):
+        """Payload de la OT de un paso. Una OT cancelada cuenta como 'sin OT'."""
+        if not workshop or workshop.state == 'cancel':
+            return False, False, ''
+
+        state_labels = dict(workshop._fields['state'].selection)
+        locked = workshop.state in self._WORKSHOP_CHAIN_LOCKED_STATES
+        lock_reason = ''
+        if locked:
+            lock_reason = _(
+                'La orden de taller %(ot)s está "%(state)s": este paso ya no se '
+                'puede modificar, eliminar ni reordenar.'
+            ) % {
+                'ot': workshop.name,
+                'state': state_labels.get(workshop.state, workshop.state),
+            }
+
+        return {
+            'id': workshop.id,
+            'name': workshop.name or '',
+            'state': workshop.state,
+            'state_label': state_labels.get(workshop.state, workshop.state),
+        }, locked, lock_reason
+
+    def get_workshop_chain_workspace_data(self):
+        """Todo lo que el workspace OWL necesita, en una sola llamada."""
+        self.ensure_one()
+
+        main_workshop = self.stone_workshop_order_id
+        main_ot, main_locked, main_reason = self._workshop_chain_ot_payload(main_workshop)
+
+        steps = [{
+            'pl_id': 0,
+            'type': 'main',
+            'process': self._workshop_chain_product_payload(False) if not self.stone_workshop_process_id else {
+                'id': self.stone_workshop_process_id.id,
+                'name': self.stone_workshop_process_id.display_name or '',
+            },
+            'receive': self._workshop_chain_product_payload(self.stone_workshop_base_product_id),
+            'ot': main_ot,
+            'locked': main_locked,
+            'lock_reason': main_reason,
+        }]
+
+        for process_line in self.stone_workshop_process_line_ids.sorted(
+            key=lambda l: (l.sequence, l.id)
+        ):
+            ot, locked, reason = self._workshop_chain_ot_payload(process_line.workshop_order_id)
+            steps.append({
+                'pl_id': process_line.id,
+                'type': 'extra',
+                'process': {
+                    'id': process_line.process_id.id,
+                    'name': process_line.process_id.display_name or '',
+                } if process_line.process_id else False,
+                'receive': self._workshop_chain_product_payload(process_line.input_product_id),
+                'ot': ot,
+                'locked': locked,
+                'lock_reason': reason,
+            })
+
+        processes = [{
+            'id': process.id,
+            'name': process.display_name or '',
+        } for process in self.env['workshop.process'].search([])]
+
+        uom = self._stone_workshop_get_line_uom()
+
+        return {
+            'line': {
+                'id': self.id,
+                'order_name': self.order_id.name or '',
+                'order_state': self.order_id.state,
+                'qty': self.product_uom_qty or 0.0,
+                'uom': uom.display_name if uom else '',
+                'origin_product': self._workshop_chain_product_payload(
+                    self.stone_workshop_base_product_id
+                ),
+                'sold_product': self._workshop_chain_product_payload(self.product_id),
+            },
+            'steps': steps,
+            'processes': processes,
+        }
+
+    @api.model
+    def _validate_workshop_chain_payload_values(self, base_product, sold_product, steps):
+        """Validación pura de la cadena (espejo de validateWorkshopChain JS).
+
+        `steps`: lista de dicts {'process_id', 'input_product_id'} donde el
+        primer elemento es el paso principal (su input es el producto origen).
+        Devuelve lista de mensajes de error; vacía si la cadena es válida.
+        """
+        errors = []
+
+        if not steps:
+            errors.append(_('La cadena debe tener al menos el paso principal.'))
+            return errors
+
+        if not base_product:
+            errors.append(_('La línea no tiene producto de origen configurado.'))
+        if not sold_product:
+            errors.append(_('La línea no tiene producto vendido.'))
+
+        seen_pairs = {}
+        for index, step in enumerate(steps, start=1):
+            if not step.get('process_id'):
+                errors.append(_('El paso %s no tiene proceso definido.') % index)
+
+            receive_id = base_product.id if (index == 1 and base_product) else step.get('input_product_id')
+            if index > 1 and not receive_id:
+                errors.append(_(
+                    'El paso %s no recibe ningún producto: define qué entrega el paso anterior.'
+                ) % index)
+
+            pair = (step.get('process_id') or 0, receive_id or 0)
+            if all(pair) and pair in seen_pairs:
+                errors.append(_(
+                    'El paso %(step)s está duplicado: mismo proceso y mismo producto '
+                    'que el paso %(other)s.'
+                ) % {'step': index, 'other': seen_pairs[pair]})
+            elif all(pair):
+                seen_pairs[pair] = index
+
+        return errors
+
+    def save_workshop_chain_from_workspace(self, payload):
+        """Persiste la cadena editada en el workspace en una sola transacción.
+
+        payload = {
+            'steps': [{'id': pl_id|0, 'type': 'main'|'extra',
+                       'process_id': int, 'input_product_id': int|false}, ...],
+            'deleted_ids': [pl_id, ...],
+        }
+        El primer paso es el principal (escribe el proceso de la línea); los
+        demás se upsertean como sale.stone.workshop.process.line en orden.
+        La sincronización de OTs se hace UNA vez al final (resync).
+        """
+        self.ensure_one()
+        payload = payload or {}
+        steps = payload.get('steps') or []
+        deleted_ids = [int(x) for x in (payload.get('deleted_ids') or []) if x]
+
+        errors = self._validate_workshop_chain_payload_values(
+            self.stone_workshop_base_product_id,
+            self.product_id,
+            steps,
+        )
+        if errors:
+            raise UserError(_(
+                'La cadena de procesos no es válida:\n\n%s'
+            ) % '\n'.join('- %s' % e for e in errors))
+
+        ProcessLine = self.env['sale.stone.workshop.process.line'].with_context(
+            skip_stone_workshop_chain_resync=True,
+        )
+
+        # 1) Paso principal: proceso de la línea.
+        main = steps[0]
+        main_process_id = int(main.get('process_id') or 0)
+        if main_process_id and self.stone_workshop_process_id.id != main_process_id:
+            main_workshop = self.stone_workshop_order_id
+            if main_workshop and main_workshop.state in self._WORKSHOP_CHAIN_LOCKED_STATES:
+                raise UserError(_(
+                    'No puedes cambiar el proceso principal: su orden de taller %s '
+                    'ya está en taller o terminada.'
+                ) % main_workshop.name)
+            self.with_context(skip_stone_workshop_autosync=True).write({
+                'stone_workshop_process_id': main_process_id,
+            })
+
+        # 2) Eliminaciones (el unlink del modelo bloquea pasos con OT viva).
+        if deleted_ids:
+            to_delete = ProcessLine.browse(deleted_ids).exists().filtered(
+                lambda l: l.sale_line_id == self
+            )
+            to_delete.unlink()
+
+        # 3) Upsert de pasos adicionales en el orden recibido.
+        for index, step in enumerate(steps[1:], start=1):
+            vals = {
+                'sequence': index * 10,
+                'process_id': int(step.get('process_id') or 0),
+                'input_product_id': int(step.get('input_product_id') or 0),
+            }
+            pl_id = int(step.get('id') or 0)
+
+            if pl_id:
+                process_line = ProcessLine.browse(pl_id).exists()
+                if not process_line or process_line.sale_line_id != self:
+                    continue
+
+                locked = (
+                    process_line.workshop_order_id
+                    and process_line.workshop_order_id.state in self._WORKSHOP_CHAIN_LOCKED_STATES
+                )
+                changed = (
+                    process_line.process_id.id != vals['process_id']
+                    or process_line.input_product_id.id != vals['input_product_id']
+                )
+                if locked and changed:
+                    raise UserError(_(
+                        'El paso "%(step)s" no se puede modificar: su orden de taller '
+                        '%(ot)s ya está en taller o terminada.'
+                    ) % {
+                        'step': process_line.name,
+                        'ot': process_line.workshop_order_id.name,
+                    })
+
+                if locked:
+                    process_line.write({'sequence': vals['sequence']})
+                else:
+                    process_line.write(vals)
+            else:
+                vals['sale_line_id'] = self.id
+                ProcessLine.create(vals)
+
+        # 4) Sincronizar la cadena de OTs una sola vez.
+        self._stone_workshop_resync_chain()
+        self._stone_workshop_autosync()
+
+        return True
 
     @api.model
     def _stone_workshop_vals_from_product(self, product):

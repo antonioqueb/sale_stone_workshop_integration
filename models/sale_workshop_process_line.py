@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models, _
-from odoo.exceptions import UserError
+from odoo.exceptions import UserError, ValidationError
 
 
 class SaleStoneWorkshopProcessLine(models.Model):
@@ -125,6 +125,47 @@ class SaleStoneWorkshopProcessLine(models.Model):
                     if final_product
                     else _('Producto vendido')
                 )
+
+    # -------------------------------------------------------------------------
+    # Validaciones de integridad de la cadena (espejo backend del
+    # validateWorkshopChain del workspace: aplican aunque se omita el frontend)
+    # -------------------------------------------------------------------------
+
+    @api.constrains('sale_line_id', 'process_id', 'input_product_id')
+    def _check_workshop_chain_integrity(self):
+        for line in self:
+            if not line.sale_line_id:
+                continue
+
+            # Paso incompleto (defensa extra sobre required=True, cubre
+            # escrituras vía SQL-less ORM con valores falsy).
+            if not line.process_id:
+                raise ValidationError(_(
+                    'Cada paso de la cadena de taller debe tener un proceso.'
+                ))
+            if not line.input_product_id:
+                raise ValidationError(_(
+                    'Cada paso de la cadena de taller debe indicar qué producto recibe.'
+                ))
+
+            # Paso duplicado: mismo proceso recibiendo el mismo producto en la
+            # misma línea de venta produce dos OTs idénticas compitiendo por
+            # el mismo material.
+            duplicates = line.sale_line_id.stone_workshop_process_line_ids.filtered(
+                lambda sibling:
+                    sibling.id != line.id
+                    and sibling.process_id == line.process_id
+                    and sibling.input_product_id == line.input_product_id
+            )
+            if duplicates:
+                raise ValidationError(_(
+                    'La cadena de "%(final)s" tiene pasos duplicados: el proceso '
+                    '%(process)s recibiendo %(product)s aparece más de una vez.'
+                ) % {
+                    'final': line.sale_line_id.product_id.display_name or '',
+                    'process': line.process_id.display_name,
+                    'product': line.input_product_id.display_name,
+                })
 
     # -------------------------------------------------------------------------
     # Sincronización de la cadena de OTs al editar pasos tras la confirmación
