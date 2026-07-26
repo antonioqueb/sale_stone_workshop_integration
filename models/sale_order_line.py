@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
+from html import escape
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -150,6 +151,14 @@ class SaleOrderLine(models.Model):
     stone_workshop_process_chain_count = fields.Integer(
         string='Procesos adicionales',
         compute='_compute_stone_workshop_process_chain_count',
+    )
+    stone_workshop_chain_preview = fields.Html(
+        string='Vista de la cadena',
+        compute='_compute_stone_workshop_chain_preview',
+        sanitize=False,
+        help='Representación visual de la cadena de procesos: producto origen, '
+             'pasos de taller (con su OT si ya existe) y producto vendido. '
+             'Contenido generado y escapado en servidor; solo lectura.',
     )
 
     stone_is_workshop_service_line = fields.Boolean(
@@ -310,6 +319,127 @@ class SaleOrderLine(models.Model):
         for line in self:
             line.stone_workshop_process_chain_count = len(line.stone_workshop_process_line_ids)
 
+    @api.depends(
+        'stone_workshop_required',
+        'product_id',
+        'stone_workshop_base_product_id',
+        'stone_workshop_process_id',
+        'stone_workshop_order_id.state',
+        'stone_workshop_process_line_ids.sequence',
+        'stone_workshop_process_line_ids.process_id',
+        'stone_workshop_process_line_ids.input_product_id',
+        'stone_workshop_process_line_ids.workshop_order_id.state',
+    )
+    def _compute_stone_workshop_chain_preview(self):
+        """Renderiza la cadena como pipeline visual (HTML de servidor, escapado).
+
+        Se recalcula en vivo dentro del modal al agregar/quitar/reordenar
+        pasos, para que el usuario vea de inmediato qué recibe y qué entrega
+        cada proceso. Ordena las líneas SOLO por sequence (orden estable):
+        en edición los registros pueden ser NewId y no admiten ordenar por id.
+        """
+        state_labels = dict(self.env['workshop.order']._fields['state'].selection)
+        state_badges = {
+            'draft': 'text-bg-secondary',
+            'in_workshop': 'text-bg-warning',
+            'done': 'text-bg-success',
+            'cancel': 'text-bg-danger',
+        }
+
+        def chip(product, kind, tag):
+            if product:
+                return (
+                    '<span class="o_sw_chain_material o_sw_%s">'
+                    '<span class="o_sw_tag">%s</span>%s</span>'
+                ) % (kind, escape(tag), escape(product.display_name or ''))
+            return (
+                '<span class="o_sw_chain_material o_sw_missing">'
+                '<span class="o_sw_tag">%s</span>%s</span>'
+            ) % (escape(tag), escape(_('Sin definir')))
+
+        arrow = (
+            '<span class="o_sw_chain_arrow">'
+            '<i class="fa fa-long-arrow-right" role="img" aria-label="&#8594;" title=""/>'
+            '</span>'
+        )
+
+        for line in self:
+            if (
+                not line.stone_workshop_required
+                or line.display_type
+                or line.stone_is_workshop_service_line
+            ):
+                line.stone_workshop_chain_preview = False
+                continue
+
+            steps = [{
+                'label': _('Paso 1 · Principal'),
+                'process': line.stone_workshop_process_id,
+                'input_product': line.stone_workshop_base_product_id,
+                'workshop': line.stone_workshop_order_id,
+            }]
+            extra_lines = line.stone_workshop_process_line_ids.sorted(
+                key=lambda l: l.sequence or 0
+            )
+            for index, process_line in enumerate(extra_lines, start=2):
+                steps.append({
+                    'label': _('Paso %s') % index,
+                    'process': process_line.process_id,
+                    'input_product': process_line.input_product_id,
+                    'workshop': process_line.workshop_order_id,
+                })
+
+            for index, step in enumerate(steps):
+                if index + 1 < len(steps):
+                    step['output_product'] = steps[index + 1]['input_product']
+                else:
+                    step['output_product'] = line.product_id
+
+            parts = ['<div class="o_sw_chain">']
+            parts.append(chip(line.stone_workshop_base_product_id, 'origin', _('Origen')))
+
+            for index, step in enumerate(steps):
+                parts.append(arrow)
+
+                process = step['process']
+                process_name = (
+                    escape(process.display_name or '')
+                    if process
+                    else escape(_('Sin proceso'))
+                )
+                step_class = 'o_sw_chain_step' + ('' if process else ' o_sw_step_missing')
+
+                ot_html = ''
+                workshop = step['workshop']
+                if workshop and workshop.id:
+                    badge_class = state_badges.get(workshop.state, 'text-bg-secondary')
+                    ot_html = (
+                        '<div class="o_sw_step_ot"><span class="badge %s">%s · %s</span></div>'
+                    ) % (
+                        badge_class,
+                        escape(workshop.name or ''),
+                        escape(state_labels.get(workshop.state, workshop.state or '')),
+                    )
+
+                parts.append(
+                    '<span class="%s">'
+                    '<div class="o_sw_step_seq">%s</div>'
+                    '<div class="o_sw_step_name">%s</div>'
+                    '%s</span>' % (step_class, escape(step['label']), process_name, ot_html)
+                )
+
+                parts.append(arrow)
+
+                is_final = index + 1 == len(steps)
+                parts.append(chip(
+                    step['output_product'],
+                    'final' if is_final else 'intermediate',
+                    _('Vendido') if is_final else _('Intermedio'),
+                ))
+
+            parts.append('</div>')
+            line.stone_workshop_chain_preview = ''.join(parts)
+
     # -------------------------------------------------------------------------
     # Cadena de procesos adicionales de taller
     # -------------------------------------------------------------------------
@@ -365,7 +495,7 @@ class SaleOrderLine(models.Model):
 
         return {
             'type': 'ir.actions.act_window',
-            'name': _('Procesos adicionales de taller'),
+            'name': _('Cadena de procesos de taller'),
             'res_model': 'sale.order.line',
             'res_id': self.id,
             'view_mode': 'form',
@@ -373,6 +503,7 @@ class SaleOrderLine(models.Model):
                 'sale_stone_workshop_integration.view_sale_order_line_workshop_chain_form'
             ).id,
             'target': 'new',
+            'context': dict(self.env.context, dialog_size='extra-large'),
         }
 
     @api.model

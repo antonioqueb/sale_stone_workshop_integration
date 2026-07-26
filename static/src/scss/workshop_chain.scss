@@ -1,0 +1,127 @@
+// Pipeline visual de la cadena de procesos de taller (modal desde la venta).
+// Renderizado por _compute_stone_workshop_chain_preview (HTML de servidor).
+
+.o_sw_chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 6px 8px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    border: 1px solid #dee2e6;
+    border-radius: 10px;
+    background: repeating-linear-gradient(
+        -45deg,
+        #f8f9fa,
+        #f8f9fa 12px,
+        #f4f5f7 12px,
+        #f4f5f7 24px
+    );
+
+    .o_sw_chain_arrow {
+        align-self: center;
+        color: #adb5bd;
+        font-size: 16px;
+        padding: 0 2px;
+    }
+
+    .o_sw_chain_material {
+        align-self: center;
+        display: inline-flex;
+        flex-direction: column;
+        padding: 5px 14px;
+        border-radius: 18px;
+        font-weight: 500;
+        line-height: 1.25;
+        border: 1px solid #ced4da;
+        background: #e9ecef;
+        color: #495057;
+
+        .o_sw_tag {
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            opacity: 0.75;
+        }
+
+        &.o_sw_origin {
+            background: #cfe2ff;
+            border-color: #9ec5fe;
+            color: #084298;
+        }
+
+        &.o_sw_intermediate {
+            background: #fff3cd;
+            border-color: #ffe69c;
+            color: #664d03;
+        }
+
+        &.o_sw_final {
+            background: #d1e7dd;
+            border-color: #a3cfbb;
+            color: #0f5132;
+            box-shadow: 0 0 0 3px rgba(25, 135, 84, 0.12);
+        }
+
+        &.o_sw_missing {
+            background: #f8d7da;
+            border-color: #f1aeb5;
+            color: #842029;
+            font-style: italic;
+        }
+    }
+
+    .o_sw_chain_step {
+        display: inline-flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 150px;
+        padding: 8px 14px;
+        border: 1px solid #dee2e6;
+        border-left: 4px solid #714b67;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+        .o_sw_step_seq {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            color: #714b67;
+        }
+
+        .o_sw_step_name {
+            font-weight: 600;
+            color: #212529;
+        }
+
+        .o_sw_step_ot {
+            margin-top: 3px;
+
+            .badge {
+                font-size: 10px;
+                font-weight: 600;
+            }
+        }
+
+        &.o_sw_step_missing {
+            border-left-color: #dc3545;
+
+            .o_sw_step_seq {
+                color: #dc3545;
+            }
+
+            .o_sw_step_name {
+                color: #842029;
+                font-style: italic;
+            }
+        }
+    }
+}
+
+// El contenedor del campo html no debe meter márgenes extra dentro del modal.
+.o_field_html .o_sw_chain {
+    margin-top: 0;
+}

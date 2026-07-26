@@ -54,14 +54,15 @@
                                    invisible="not stone_workshop_required"/>
 
                             <field name="stone_workshop_process_chain_count"
-                                   string="# Procesos"
+                                   string="Pasos extra"
                                    invisible="not stone_workshop_required"
-                                   readonly="1"/>
+                                   readonly="1"
+                                   optional="show"/>
 
                             <button name="action_open_stone_workshop_process_chain"
                                     type="object"
-                                    string="Procesos adicionales"
-                                    icon="fa-list-ol"
+                                    string="Cadena de procesos"
+                                    icon="fa-random"
                                     class="btn-link"
                                     invisible="not stone_workshop_required"/>
                         </list>
@@ -76,38 +77,85 @@
         <field name="name">sale.order.line.workshop.chain.form</field>
         <field name="model">sale.order.line</field>
         <field name="arch" type="xml">
-            <form string="Procesos adicionales de taller">
+            <form string="Cadena de procesos de taller">
                 <sheet>
-                    <div class="alert alert-info" role="alert">
-                        Define la cadena de procesos de taller. El primer proceso consume el
-                        <strong>producto origen</strong>; cada proceso adicional consume el producto
-                        intermedio que produjo el paso anterior, y el último paso produce el
-                        <strong>producto vendido</strong>.
+                    <div class="oe_title mb-2">
+                        <h4 class="mb-0">
+                            <i class="fa fa-random me-2 text-muted" title="Cadena de procesos"/>Cadena de procesos de taller
+                        </h4>
+                        <div class="text-muted small">
+                            Así viajará el material: cada paso recibe lo que entregó el anterior
+                            y el último paso entrega el <strong>producto vendido</strong>.
+                        </div>
                     </div>
 
+                    <!-- Pipeline visual: se actualiza en vivo al editar los pasos. -->
+                    <field name="stone_workshop_chain_preview"
+                           widget="html"
+                           nolabel="1"
+                           readonly="1"/>
+
                     <group>
-                        <group>
-                            <field name="product_id" string="Producto vendido" readonly="1"/>
-                            <field name="stone_workshop_base_product_id" string="Producto origen" readonly="1"/>
+                        <group string="Línea de venta">
+                            <field name="product_id"
+                                   string="Producto vendido"
+                                   readonly="1"
+                                   options="{'no_open': True}"/>
+                            <field name="product_uom_qty"
+                                   string="Cantidad"
+                                   readonly="1"/>
                         </group>
-                        <group>
-                            <field name="stone_workshop_process_id" string="Proceso principal" readonly="1"/>
+                        <group string="Paso 1 · Principal">
+                            <field name="stone_workshop_base_product_id"
+                                   string="Recibe (origen)"
+                                   readonly="1"
+                                   options="{'no_open': True}"/>
+                            <field name="stone_workshop_process_id"
+                                   string="Proceso"
+                                   readonly="1"
+                                   options="{'no_open': True}"/>
                         </group>
                     </group>
 
-                    <separator string="Procesos adicionales (en orden)"/>
+                    <separator string="Pasos adicionales"/>
+                    <div class="text-muted small mb-2">
+                        Agrega un paso por cada proceso extra después del principal.
+                        En <strong>Recibe</strong> indica el producto intermedio que ese paso toma
+                        del anterior; la columna <strong>Entrega</strong> se calcula sola.
+                        Arrastra <i class="fa fa-bars" title="Reordenar"/> para reordenar.
+                        Los pasos con OT generada quedan bloqueados.
+                    </div>
                     <field name="stone_workshop_process_line_ids">
                         <list editable="bottom">
                             <field name="sequence" widget="handle"/>
-                            <field name="process_id"/>
-                            <field name="input_product_id"/>
-                            <field name="workshop_order_id" readonly="1" optional="show"/>
+                            <field name="process_id"
+                                   string="Proceso"
+                                   readonly="workshop_order_id"
+                                   options="{'no_open': True, 'no_create': True}"/>
+                            <field name="input_product_id"
+                                   string="Recibe"
+                                   readonly="workshop_order_id"
+                                   options="{'no_open': True, 'no_create': True}"/>
+                            <field name="output_product_display"
+                                   string="Entrega"/>
+                            <field name="workshop_order_id"
+                                   string="OT"
+                                   readonly="1"
+                                   optional="show"/>
+                            <field name="workshop_order_state"
+                                   string="Estado OT"
+                                   widget="badge"
+                                   optional="show"
+                                   decoration-info="workshop_order_state == 'draft'"
+                                   decoration-warning="workshop_order_state == 'in_workshop'"
+                                   decoration-success="workshop_order_state == 'done'"
+                                   decoration-danger="workshop_order_state == 'cancel'"/>
                         </list>
                     </field>
                 </sheet>
                 <footer>
                     <button string="Guardar" special="save" class="btn-primary"/>
-                    <button string="Cerrar" special="cancel" class="btn-secondary"/>
+                    <button string="Descartar" special="cancel" class="btn-secondary"/>
                 </footer>
             </form>
         </field>

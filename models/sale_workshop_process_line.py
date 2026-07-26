@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from odoo import api, fields, models
+from odoo import api, fields, models, _
+from odoo.exceptions import UserError
 
 
 class SaleStoneWorkshopProcessLine(models.Model):
@@ -38,14 +39,20 @@ class SaleStoneWorkshopProcessLine(models.Model):
     )
     input_product_id = fields.Many2one(
         'product.product',
-        string='Producto que consume',
+        string='Recibe',
         required=True,
         domain=[('tracking', '!=', 'none')],
         help=(
-            'Producto intermedio que este proceso recibe del paso anterior. '
-            'El resultado de este proceso lo consume el siguiente paso, y el último '
-            'paso produce el producto vendido.'
+            'Producto intermedio que este paso recibe del paso anterior. '
+            'Lo que este paso entrega lo define el siguiente paso (su "Recibe"); '
+            'el último paso entrega el producto vendido.'
         ),
+    )
+    output_product_display = fields.Char(
+        string='Entrega',
+        compute='_compute_output_product_display',
+        help='Lo que este paso produce: el producto que recibe el siguiente '
+             'paso, o el producto vendido si es el último de la cadena.',
     )
     workshop_order_id = fields.Many2one(
         'workshop.order',
@@ -54,6 +61,11 @@ class SaleStoneWorkshopProcessLine(models.Model):
         copy=False,
         ondelete='set null',
         help='Orden de taller generada para este paso al confirmar la venta.',
+    )
+    workshop_order_state = fields.Selection(
+        related='workshop_order_id.state',
+        string='Estado OT',
+        readonly=True,
     )
     name = fields.Char(
         string='Descripción',
@@ -70,3 +82,64 @@ class SaleStoneWorkshopProcessLine(models.Model):
                 line.name = '%s ← %s' % (process, product)
             else:
                 line.name = process or product or '/'
+
+    @api.depends(
+        'sequence',
+        'input_product_id',
+        'sale_line_id.product_id',
+        'sale_line_id.stone_workshop_process_line_ids.sequence',
+        'sale_line_id.stone_workshop_process_line_ids.input_product_id',
+    )
+    def _compute_output_product_display(self):
+        """Lo que entrega el paso = lo que recibe el paso siguiente.
+
+        Orden estable SOLO por sequence: en edición dentro del modal las
+        líneas pueden ser NewId y no admiten desempatar por id.
+        """
+        for line in self:
+            sale_line = line.sale_line_id
+            if not sale_line:
+                line.output_product_display = ''
+                continue
+
+            siblings = list(sale_line.stone_workshop_process_line_ids.sorted(
+                key=lambda l: l.sequence or 0
+            ))
+            try:
+                position = siblings.index(line)
+            except ValueError:
+                line.output_product_display = ''
+                continue
+
+            if position + 1 < len(siblings):
+                next_product = siblings[position + 1].input_product_id
+                line.output_product_display = (
+                    next_product.display_name
+                    if next_product
+                    else _('Sin definir (paso siguiente)')
+                )
+            else:
+                final_product = sale_line.product_id
+                line.output_product_display = (
+                    _('%s (producto vendido)') % final_product.display_name
+                    if final_product
+                    else _('Producto vendido')
+                )
+
+    def unlink(self):
+        """Un paso con OT viva no se borra silenciosamente.
+
+        Borrar la fila dejaría la OT del paso huérfana (ondelete='set null')
+        y la cadena rota sin aviso. Se exige cancelar la OT primero.
+        """
+        linked = self.filtered(
+            lambda l: l.workshop_order_id and l.workshop_order_id.state != 'cancel'
+        )
+        if linked:
+            raise UserError(_(
+                'No puedes eliminar estos pasos porque ya tienen orden de taller '
+                'generada:\n%s\n\nCancela primero la orden de taller correspondiente.'
+            ) % '\n'.join(
+                '- %s → %s' % (l.name, l.workshop_order_id.name) for l in linked
+            ))
+        return super().unlink()
