@@ -59,11 +59,13 @@
                                    readonly="1"
                                    optional="show"/>
 
+                            <!-- Botón de celda: solo ícono + tooltip. Un botón
+                                 con string dentro de una lista rompe el ancho
+                                 de la columna y descuadra el grid. -->
                             <button name="action_open_stone_workshop_process_chain"
                                     type="object"
-                                    string="Cadena de procesos"
                                     icon="fa-random"
-                                    class="btn-link"
+                                    title="Cadena de procesos de taller"
                                     invisible="not stone_workshop_required"/>
                         </list>
                     </field>

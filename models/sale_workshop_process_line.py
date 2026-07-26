@@ -126,11 +126,36 @@ class SaleStoneWorkshopProcessLine(models.Model):
                     else _('Producto vendido')
                 )
 
+    # -------------------------------------------------------------------------
+    # Sincronización de la cadena de OTs al editar pasos tras la confirmación
+    # -------------------------------------------------------------------------
+
+    _CHAIN_SYNC_FIELDS = ('process_id', 'input_product_id', 'sequence')
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        lines = super().create(vals_list)
+        # Paso agregado con la venta YA confirmada: crear su OT y re-enlazar
+        # la cadena de inmediato (antes solo nacían al confirmar la venta).
+        if not self.env.context.get('skip_stone_workshop_chain_resync'):
+            lines.mapped('sale_line_id')._stone_workshop_resync_chain()
+        return lines
+
+    def write(self, vals):
+        res = super().write(vals)
+        if (
+            not self.env.context.get('skip_stone_workshop_chain_resync')
+            and any(f in vals for f in self._CHAIN_SYNC_FIELDS)
+        ):
+            self.mapped('sale_line_id')._stone_workshop_resync_chain()
+        return res
+
     def unlink(self):
         """Un paso con OT viva no se borra silenciosamente.
 
         Borrar la fila dejaría la OT del paso huérfana (ondelete='set null')
-        y la cadena rota sin aviso. Se exige cancelar la OT primero.
+        y la cadena rota sin aviso. Se exige cancelar la OT primero. Tras el
+        borrado se re-enlaza la cadena restante.
         """
         linked = self.filtered(
             lambda l: l.workshop_order_id and l.workshop_order_id.state != 'cancel'
@@ -142,4 +167,11 @@ class SaleStoneWorkshopProcessLine(models.Model):
             ) % '\n'.join(
                 '- %s → %s' % (l.name, l.workshop_order_id.name) for l in linked
             ))
-        return super().unlink()
+
+        sale_lines = self.mapped('sale_line_id')
+        res = super().unlink()
+
+        if not self.env.context.get('skip_stone_workshop_chain_resync'):
+            sale_lines.exists()._stone_workshop_resync_chain()
+
+        return res

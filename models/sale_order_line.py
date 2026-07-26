@@ -719,12 +719,15 @@ class SaleOrderLine(models.Model):
         if base_product and workshop_order.input_product_id != base_product:
             vals['input_product_id'] = base_product.id
 
-        if (
-            self.product_id
-            and 'default_product_out_id' in workshop_order._fields
-            and workshop_order.default_product_out_id != self.product_id
-        ):
-            vals['default_product_out_id'] = self.product_id.id
+        # CAUSA RAÍZ del encadenamiento roto: aquí se forzaba la salida de la
+        # primera OT al producto VENDIDO ignorando la cadena. Con pasos
+        # adicionales, el Paso 1 debe producir el producto INTERMEDIO (lo que
+        # "Recibe" el Paso 2); si produce el vendido, el alimentador no
+        # encuentra lotes del intermedio y el Paso 2 queda vacío para siempre.
+        if self.product_id and 'default_product_out_id' in workshop_order._fields:
+            expected_out = self._stone_workshop_chain_steps()[0].get('output_product')
+            if expected_out and workshop_order.default_product_out_id != expected_out:
+                vals['default_product_out_id'] = expected_out.id
 
         if vals:
             _logger.info(
@@ -735,6 +738,116 @@ class SaleOrderLine(models.Model):
                 list(vals.keys()),
             )
             workshop_order.write(vals)
+
+    def _stone_workshop_resync_chain(self):
+        """Sincroniza la cadena de OTs con los pasos configurados en la línea.
+
+        Cubre el hueco de editar la cadena DESPUÉS de confirmar la venta
+        (antes las OTs adicionales solo nacían en la confirmación):
+
+        - crea la OT faltante de cada paso adicional sin OT viva;
+        - realinea los punteros paso anterior/siguiente y la posición;
+        - en OTs aún en borrador, sincroniza proceso, producto de entrada y
+          producto de salida según la cadena;
+        - si un paso previo ya está TERMINADO y el siguiente quedó vacío, lo
+          alimenta retroactivamente con los lotes producidos.
+        """
+        if self.env.context.get('skip_stone_workshop_chain_resync'):
+            return False
+
+        WorkshopOrder = self.env['workshop.order']
+
+        for line in self:
+            order = line.order_id
+            if not order or order.state not in ('sale', 'done'):
+                continue
+            if 'x_is_quote_backup' in order._fields and order.x_is_quote_backup:
+                continue
+            if line.display_type or line.stone_is_workshop_service_line:
+                continue
+
+            first = line.stone_workshop_order_id
+            if not first or first.state == 'cancel':
+                # La cadena nace con la primera OT (al confirmar o con el
+                # botón manual); sin ella no hay nada que sincronizar.
+                continue
+
+            steps = line._stone_workshop_chain_steps()
+            chain = [first]
+
+            for step in steps[1:]:
+                process_line = step['process_line']
+                workshop = process_line.workshop_order_id
+
+                if not workshop or workshop.state == 'cancel':
+                    vals = order._stone_workshop_get_workshop_vals(
+                        line,
+                        input_product=step['input_product'],
+                        output_product=step['output_product'],
+                        process=step['process'],
+                        sequence=step['sequence'],
+                    )
+                    vals['stone_workshop_process_line_id'] = process_line.id
+                    workshop = WorkshopOrder.create(vals)
+                    process_line.with_context(
+                        skip_stone_workshop_chain_resync=True,
+                    ).write({'workshop_order_id': workshop.id})
+
+                    order.message_post(body=_(
+                        'Se creó la orden de taller '
+                        '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
+                        'para el paso %(seq)s de la cadena de <strong>%(final)s</strong> '
+                        '(agregado tras la confirmación).'
+                    ) % {
+                        'id': workshop.id,
+                        'name': workshop.name,
+                        'seq': step['sequence'],
+                        'final': line.product_id.display_name,
+                    })
+                    _logger.info(
+                        '[STONE WORKSHOP SALE] Resync: OT %s creada para el paso %s '
+                        'de la línea %s.',
+                        workshop.name,
+                        step['sequence'],
+                        line.id,
+                    )
+
+                chain.append(workshop)
+
+            # Realinear punteros / posición y sincronizar OTs en borrador.
+            for index, workshop in enumerate(chain):
+                prev_id = chain[index - 1].id if index > 0 else False
+                next_id = chain[index + 1].id if index + 1 < len(chain) else False
+
+                vals = {}
+                if workshop.stone_workshop_chain_sequence != index + 1:
+                    vals['stone_workshop_chain_sequence'] = index + 1
+                if (workshop.stone_workshop_chain_prev_order_id.id or False) != prev_id:
+                    vals['stone_workshop_chain_prev_order_id'] = prev_id
+                if (workshop.stone_workshop_chain_next_order_id.id or False) != next_id:
+                    vals['stone_workshop_chain_next_order_id'] = next_id
+
+                if workshop.state == 'draft':
+                    step = steps[index]
+                    if step['process'] and workshop.process_id != step['process']:
+                        vals['process_id'] = step['process'].id
+                    if step['input_product'] and workshop.input_product_id != step['input_product']:
+                        vals['input_product_id'] = step['input_product'].id
+                    if step['output_product'] and workshop.default_product_out_id != step['output_product']:
+                        vals['default_product_out_id'] = step['output_product'].id
+
+                if vals:
+                    workshop.write(vals)
+
+            # Alimentación retroactiva: el paso previo ya terminó y el
+            # siguiente sigue en borrador sin material.
+            for index in range(len(chain) - 1):
+                prev_ws = chain[index]
+                next_ws = chain[index + 1]
+                if prev_ws.state == 'done' and next_ws.state == 'draft':
+                    prev_ws._stone_workshop_feed_next_chain_orders()
+
+        return True
 
     def _stone_workshop_line_qty_done_or_reserved(self):
         self.ensure_one()

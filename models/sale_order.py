@@ -506,7 +506,11 @@ class SaleOrder(models.Model):
                 })
                 line._stone_workshop_push_input_selections_to_workshop(workshop)
             elif step['process_line']:
-                step['process_line'].write({'workshop_order_id': workshop.id})
+                # skip: el hook de write del paso no debe disparar el resync
+                # de la cadena mientras la cadena se está creando aquí mismo.
+                step['process_line'].with_context(
+                    skip_stone_workshop_chain_resync=True,
+                ).write({'workshop_order_id': workshop.id})
 
             chain_orders |= workshop
             prev_order = workshop

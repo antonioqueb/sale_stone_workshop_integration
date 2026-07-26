@@ -193,6 +193,32 @@ class WorkshopOrder(models.Model):
 
         return True
 
+    def action_view_chain_prev_order(self):
+        self.ensure_one()
+        if not self.stone_workshop_chain_prev_order_id:
+            raise UserError(_('Esta orden no tiene un paso anterior en la cadena.'))
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Paso anterior'),
+            'res_model': 'workshop.order',
+            'view_mode': 'form',
+            'res_id': self.stone_workshop_chain_prev_order_id.id,
+            'target': 'current',
+        }
+
+    def action_view_chain_next_order(self):
+        self.ensure_one()
+        if not self.stone_workshop_chain_next_order_id:
+            raise UserError(_('Esta orden no tiene un paso siguiente en la cadena.'))
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Siguiente proceso'),
+            'res_model': 'workshop.order',
+            'view_mode': 'form',
+            'res_id': self.stone_workshop_chain_next_order_id.id,
+            'target': 'current',
+        }
+
     # ------------------------------------------------------------------
     # Reservation picking helpers
     # ------------------------------------------------------------------
@@ -1175,6 +1201,18 @@ class WorkshopOrder(models.Model):
                     nxt.input_product_id.display_name,
                     nxt.name,
                 )
+                # Aviso VISIBLE: antes esto solo quedaba en el log del
+                # servidor y el usuario no tenía forma de saber por qué el
+                # siguiente paso quedó sin material.
+                order.message_post(body=_(
+                    '⚠ El siguiente proceso <strong>%(next)s</strong> NO se alimentó: esta orden '
+                    'no produjo lotes de <strong>%(product)s</strong> (el producto que ese paso '
+                    'consume). Revisa el producto de salida de esta orden o alimenta el '
+                    'siguiente paso manualmente.'
+                ) % {
+                    'next': nxt.name,
+                    'product': nxt.input_product_id.display_name,
+                })
                 continue
 
             nxt._ensure_default_locations()
@@ -1201,6 +1239,26 @@ class WorkshopOrder(models.Model):
                     'lots': ', '.join(produced.mapped('lot_id.name')),
                 }
             )
+
+            # Rastro en la orden que terminó, con liga al siguiente paso.
+            order.message_post(body=_(
+                'El material producido alimentó automáticamente el siguiente proceso '
+                '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a>: %(lots)s.'
+            ) % {
+                'id': nxt.id,
+                'name': nxt.name,
+                'lots': ', '.join(produced.mapped('lot_id.name')),
+            })
+
+            if order.sale_order_id:
+                order.sale_order_id.message_post(body=_(
+                    'Taller: %(prev)s terminó y alimentó el siguiente proceso %(next)s '
+                    'con %(count)s lote(s).'
+                ) % {
+                    'prev': order.name,
+                    'next': nxt.name,
+                    'count': len(lot_ids),
+                })
 
             _logger.info(
                 '[STONE WORKSHOP SALE] Orden %s alimentó %s lote(s) a la siguiente orden %s.',
@@ -1242,6 +1300,21 @@ class WorkshopOrder(models.Model):
             sale_line = order.sale_line_id
 
             if not sale_line or not sale_line.exists() or not order.sale_order_id:
+                continue
+
+            # Paso intermedio de una cadena: su salida es un producto
+            # intermedio que alimenta al siguiente paso, NUNCA se asigna a la
+            # venta (aunque por configuración el producto coincidiera con el
+            # vendido). Solo el último paso asigna.
+            if order.stone_workshop_chain_next_order_id:
+                if manual:
+                    raise UserError(_(
+                        'La orden %(order)s es un paso intermedio de la cadena: su salida '
+                        'alimenta al siguiente proceso (%(next)s), no se asigna al pedido.'
+                    ) % {
+                        'order': order.name,
+                        'next': order.stone_workshop_chain_next_order_id.name,
+                    })
                 continue
 
             output_lines = order.output_line_ids.filtered(

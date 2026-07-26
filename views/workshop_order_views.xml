@@ -5,22 +5,10 @@
         <field name="model">workshop.order</field>
         <field name="inherit_id" ref="stone_workshop.view_workshop_order_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//header" position="inside">
-                <!-- <button name="action_reserve_inputs_for_sale"
-                        string="Reservar placas venta"
-                        type="object"
-                        class="btn-secondary"
-                        invisible="not sale_order_id or state not in ('draft', 'validated', 'confirmed')"/>
-                <button name="action_release_sale_reservation"
-                        string="Liberar reserva"
-                        type="object"
-                        invisible="not sale_workshop_reserved or state not in ('draft', 'validated', 'confirmed')"/> -->
-                <button name="action_assign_outputs_to_sale"
-                        string="Asignar a pedido"
-                        type="object"
-                        class="btn-secondary"
-                        invisible="not sale_order_id or state != 'done'"/>
-            </xpath>
+            <!-- El botón "Asignar a pedido" se eliminó: la asignación a la
+                 venta es automática al declarar el resultado del ÚLTIMO paso
+                 de la cadena. Los pasos intermedios nunca asignan a la venta
+                 (su salida alimenta el siguiente paso). -->
 
             <xpath expr="//div[@name='button_box']" position="inside">
                 <button name="action_view_sale_order"
@@ -41,6 +29,26 @@
                     <div class="o_stat_info">
                         <span class="o_stat_text">Reserva</span>
                         <span class="o_stat_value"><field name="sale_workshop_reservation_picking_id" readonly="1"/></span>
+                    </div>
+                </button>
+                <button name="action_view_chain_prev_order"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-arrow-left"
+                        invisible="not stone_workshop_chain_prev_order_id">
+                    <div class="o_stat_info">
+                        <span class="o_stat_text">Paso anterior</span>
+                        <span class="o_stat_value"><field name="stone_workshop_chain_prev_order_id" readonly="1"/></span>
+                    </div>
+                </button>
+                <button name="action_view_chain_next_order"
+                        type="object"
+                        class="oe_stat_button"
+                        icon="fa-arrow-right"
+                        invisible="not stone_workshop_chain_next_order_id">
+                    <div class="o_stat_info">
+                        <span class="o_stat_text">Siguiente proceso</span>
+                        <span class="o_stat_value"><field name="stone_workshop_chain_next_order_id" readonly="1"/></span>
                     </div>
                 </button>
             </xpath>
