@@ -1056,6 +1056,26 @@ class WorkshopOrder(models.Model):
         nuevo. El resto del flujo (auto-generar salidas, validar reglas, pasar
         a `in_workshop`) replica al padre.
         """
+        # Candado de cadena: un paso encadenado no puede arrancar hasta que el
+        # anterior declare su resultado — su material ES ese resultado.
+        for order in self:
+            if order.state != 'draft':
+                continue
+            prev = order.stone_workshop_chain_prev_order_id
+            if prev and prev.state != 'done':
+                state_labels = dict(prev._fields['state'].selection)
+                raise UserError(_(
+                    'No puedes enviar %(order)s a taller: es el paso %(seq)s de una '
+                    'cadena y el paso anterior %(prev)s (%(state)s) aún no declara su '
+                    'resultado. Sus entradas serán exactamente el material que ese '
+                    'paso produzca.'
+                ) % {
+                    'order': order.name,
+                    'seq': order.stone_workshop_chain_sequence or 2,
+                    'prev': prev.name,
+                    'state': state_labels.get(prev.state, prev.state),
+                })
+
         handled = self.env['workshop.order']
 
         for order in self:
@@ -1160,6 +1180,36 @@ class WorkshopOrder(models.Model):
 
         return True
 
+    def _stone_workshop_chain_produced_outputs(self):
+        """Salidas útiles declaradas por esta OT (lo que puede consumir el
+        siguiente paso de la cadena): producidas/recibidas, con lote y
+        cantidad, excluyendo merma y rechazo."""
+        self.ensure_one()
+        return self.output_line_ids.filtered(
+            lambda o:
+                o.state in ('produced', 'received')
+                and o.output_type not in ('scrap', 'rejected')
+                and o.lot_id
+                and (o.qty_out or 0.0) > 0.0
+        )
+
+    def _stone_workshop_chain_allowed_lots(self):
+        """Lotes admisibles como entrada de esta OT encadenada.
+
+        Devuelve None si la OT no es un paso encadenado (sin restricción).
+        Para pasos encadenados: exactamente los lotes que produjo el paso
+        anterior del producto que este paso consume.
+        """
+        self.ensure_one()
+        prev = self.stone_workshop_chain_prev_order_id
+        if not prev:
+            return None
+
+        outputs = prev._stone_workshop_chain_produced_outputs()
+        if self.input_product_id:
+            outputs = outputs.filtered(lambda o: o.product_id == self.input_product_id)
+        return outputs.mapped('lot_id')
+
     def _stone_workshop_feed_next_chain_orders(self):
         """Alimenta la siguiente orden de la cadena con los lotes producidos.
 
@@ -1184,13 +1234,8 @@ class WorkshopOrder(models.Model):
             if nxt.input_line_ids.filtered(lambda l: l.state != 'cancelled'):
                 continue
 
-            produced = order.output_line_ids.filtered(
-                lambda o:
-                    o.state in ('produced', 'received')
-                    and o.output_type not in ('scrap', 'rejected')
-                    and o.lot_id
-                    and o.product_id == nxt.input_product_id
-                    and (o.qty_out or 0.0) > 0.0
+            produced = order._stone_workshop_chain_produced_outputs().filtered(
+                lambda o: o.product_id == nxt.input_product_id
             )
 
             lot_ids = produced.mapped('lot_id').ids
@@ -1217,6 +1262,24 @@ class WorkshopOrder(models.Model):
 
             nxt._ensure_default_locations()
 
+            # La cantidad a ingresar al siguiente paso es EXACTAMENTE la
+            # declarada como producida (qty_out / área de la salida), no lo
+            # que diga el stock en ese instante. Si el paso 1 declaró 97.5 m²
+            # pulidos, el paso 2 recibe 97.5 m², ni más ni menos.
+            produced_by_lot = {}
+            for output in produced:
+                data = produced_by_lot.setdefault(output.lot_id.id, {
+                    'qty': 0.0,
+                    'area': 0.0,
+                    'pieces': 0,
+                    'width_cm': output.width_cm or 0.0,
+                    'height_cm': output.height_cm or 0.0,
+                    'thickness_cm': output.thickness_cm or 0.0,
+                })
+                data['qty'] += output.qty_out or 0.0
+                data['area'] += order._output_line_area(output)
+                data['pieces'] += output.pieces or 0
+
             vals_list = nxt.prepare_input_line_vals_from_lots(
                 nxt.input_product_id.id,
                 lot_ids,
@@ -1224,12 +1287,27 @@ class WorkshopOrder(models.Model):
             )
 
             for vals in vals_list:
+                lot_id = vals.get('lot_id')
+                if isinstance(lot_id, (list, tuple)):
+                    lot_id = lot_id[0] if lot_id else False
+                data = produced_by_lot.get(lot_id)
+                if data:
+                    vals['qty_in'] = data['qty']
+                    vals['area_sqm'] = data['area'] or data['qty']
+                    if data['pieces']:
+                        vals['pieces'] = data['pieces']
+                    for dim in ('width_cm', 'height_cm', 'thickness_cm'):
+                        if data[dim]:
+                            vals[dim] = data[dim]
+
                 vals['order_id'] = nxt.id
                 vals.setdefault(
                     'reserved_origin',
                     nxt.sale_order_id.name if nxt.sale_order_id else (order.name or ''),
                 )
-                WorkshopInput.create(vals)
+                WorkshopInput.with_context(
+                    stone_workshop_chain_feeding=True,
+                ).create(vals)
 
             nxt.message_post(
                 body=_(
@@ -1432,6 +1510,96 @@ class WorkshopInputLine(models.Model):
         readonly=True,
     )
 
+    # -------------------------------------------------------------------------
+    # Candado de cadena: las entradas de un paso encadenado son EXACTAMENTE
+    # el resultado del paso anterior; no se capturan a mano ni por adelantado.
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_assert_chain_input_allowed(self, order, lot_id=False, qty_in=None):
+        """Valida una entrada contra las reglas de cadena.
+
+        - Paso anterior sin terminar: NO se pueden capturar entradas (se
+          cargan solas al declarar el resultado del paso previo).
+        - Paso anterior terminado: solo se admiten lotes producidos por él,
+          y nunca más cantidad de la que declaró producida.
+        El alimentador automático pasa `stone_workshop_chain_feeding` y queda
+        exento (él mismo garantiza lote y cantidad exactos).
+        """
+        if self.env.context.get('stone_workshop_chain_feeding'):
+            return True
+        if not order:
+            return True
+
+        prev = order.stone_workshop_chain_prev_order_id
+        if not prev:
+            return True
+
+        state_labels = dict(prev._fields['state'].selection)
+
+        if prev.state != 'done':
+            raise UserError(_(
+                'La orden %(order)s es el paso %(seq)s de una cadena de procesos: sus '
+                'entradas serán EXACTAMENTE el material que produzca el paso anterior '
+                '%(prev)s (%(state)s) y se cargan solas cuando ese paso declare su '
+                'resultado. No puedes capturarlas manualmente antes.'
+            ) % {
+                'order': order.name,
+                'seq': order.stone_workshop_chain_sequence or 2,
+                'prev': prev.name,
+                'state': state_labels.get(prev.state, prev.state),
+            })
+
+        allowed_lots = order._stone_workshop_chain_allowed_lots()
+
+        lot = False
+        if lot_id:
+            try:
+                lot = self.env['stock.lot'].browse(int(lot_id)).exists()
+            except (TypeError, ValueError):
+                lot = False
+
+        if lot and allowed_lots is not None and lot not in allowed_lots:
+            raise UserError(_(
+                'La orden %(order)s solo puede consumir los lotes producidos por el '
+                'paso anterior %(prev)s (%(lots)s). El lote %(lot)s no es resultado '
+                'de ese paso.'
+            ) % {
+                'order': order.name,
+                'prev': prev.name,
+                'lots': ', '.join(allowed_lots.mapped('name')) or _('ninguno'),
+                'lot': lot.name,
+            })
+
+        if lot and qty_in is not None:
+            try:
+                qty = float(qty_in or 0.0)
+            except (TypeError, ValueError):
+                qty = 0.0
+
+            produced_qty = sum(
+                prev._stone_workshop_chain_produced_outputs().filtered(
+                    lambda o: o.lot_id == lot
+                ).mapped('qty_out')
+            )
+            rounding = (
+                lot.product_id.uom_id.rounding
+                if lot.product_id and lot.product_id.uom_id
+                else 0.00001
+            )
+            if produced_qty and float_compare(qty, produced_qty, precision_rounding=rounding) > 0:
+                raise UserError(_(
+                    'La cantidad %(qty)s del lote %(lot)s excede lo que el paso anterior '
+                    '%(prev)s declaró producido (%(produced)s). El paso solo puede '
+                    'consumir el resultado real del anterior.'
+                ) % {
+                    'qty': qty,
+                    'lot': lot.name,
+                    'prev': prev.name,
+                    'produced': produced_qty,
+                })
+
+        return True
+
     def _check_stock_availability(self):
         sale_linked_lines = self.filtered(
             lambda l:
@@ -1455,6 +1623,23 @@ class WorkshopInputLine(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        for vals in vals_list:
+            order_value = vals.get('order_id')
+            if isinstance(order_value, (list, tuple)):
+                order_value = order_value[0] if order_value else False
+            order = (
+                self.env['workshop.order'].browse(int(order_value)).exists()
+                if order_value else False
+            )
+            lot_value = vals.get('lot_id')
+            if isinstance(lot_value, (list, tuple)):
+                lot_value = lot_value[0] if lot_value else False
+            self._stone_workshop_assert_chain_input_allowed(
+                order,
+                lot_id=lot_value,
+                qty_in=vals.get('qty_in'),
+            )
+
         lines = super().create(vals_list)
 
         if not self.env.context.get('skip_sale_workshop_reservation'):
@@ -1464,6 +1649,24 @@ class WorkshopInputLine(models.Model):
 
     def write(self, vals):
         orders = self.mapped('order_id')
+
+        if any(key in vals for key in ('lot_id', 'product_id', 'qty_in', 'order_id')):
+            for line in self:
+                order_value = vals.get('order_id')
+                if isinstance(order_value, (list, tuple)):
+                    order_value = order_value[0] if order_value else False
+                order = (
+                    self.env['workshop.order'].browse(int(order_value)).exists()
+                    if order_value else line.order_id
+                )
+                lot_value = vals.get('lot_id', line.lot_id.id)
+                if isinstance(lot_value, (list, tuple)):
+                    lot_value = lot_value[0] if lot_value else False
+                self._stone_workshop_assert_chain_input_allowed(
+                    order,
+                    lot_id=lot_value,
+                    qty_in=vals.get('qty_in') if 'qty_in' in vals else None,
+                )
 
         res = super().write(vals)
 
