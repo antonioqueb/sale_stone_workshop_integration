@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Sale Stone Workshop Integration',
-    'version': '19.0.3.10.0',
+    'version': '19.0.3.11.0',
     'category': 'Sales/Manufacturing',
     'summary': 'Integra venta, selección de placas, taller y entregas para transformar producto base en producto final',
     'description': """
@@ -25,6 +25,9 @@
         'sale_stone_selection',
         'stone_workshop',
         'sale_delivery_wizard',
+        # La columna "Taller" se ancla junto al interruptor "Asignar" y
+        # desbloquea 'Solicitado' (readonly de la regla de modo de tránsito).
+        'stock_transit_allocation',
     ],
     'data': [
         'security/ir.model.access.csv',

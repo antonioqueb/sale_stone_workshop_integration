@@ -19,16 +19,27 @@
                 </button>
             </xpath>
 
-            <!-- "Solo taller" vive en las LÍNEAS DE LA ORDEN: al activarlo, la
-                 cantidad solicitada se puede editar libremente sin el tope de
-                 stock (el producto final se fabrica en taller; equivale a
-                 "Mandar a pedir" pero hacia taller). -->
-            <xpath expr="//page[@name='order_lines']//field[@name='order_line']/list/field[@name='product_uom_qty']"
+            <!-- "Taller" vive en las LÍNEAS DE LA ORDEN, a la derecha del
+                 interruptor "Asignar" de stock_transit_allocation (dependencia
+                 declarada en el manifest). Al activarlo, la cantidad
+                 solicitada se edita libremente sin el tope de stock: el
+                 producto final se fabrica en taller (equivale a "Pedir" pero
+                 hacia taller). -->
+            <xpath expr="//field[@name='order_line']/list/field[@name='por_asignar']"
                    position="after">
                 <field name="stone_workshop_required"
-                       string="Solo taller"
+                       string="Taller"
                        widget="boolean_toggle"
+                       width="72px"
                        optional="show"/>
+            </xpath>
+
+            <!-- Desbloquear 'Solicitado' también en modo Taller: la regla de
+                 stock_transit_allocation lo deja readonly sin Pedir/Asignar;
+                 con Taller activo la cantidad es libre (se fabrica). -->
+            <xpath expr="//field[@name='order_line']/list/field[@name='product_uom_qty']"
+                   position="attributes">
+                <attribute name="readonly">not tc_is_service_line and not auto_transit_assign and not por_asignar and not stone_workshop_required</attribute>
             </xpath>
 
             <!-- ========================================================= -->
