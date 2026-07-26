@@ -318,7 +318,7 @@ class SaleOrder(models.Model):
         if line.product_id.type == 'service':
             return _('el producto es de tipo servicio.')
         if not line.stone_workshop_required:
-            return _('no está marcada como Requiere taller.')
+            return _('no está marcada como Solo taller.')
         # Una OT cancelada no cuenta como vinculada: si la venta se canceló y
         # se volvió a confirmar, la línea debe poder generar una OT nueva.
         if line.stone_workshop_order_id and line.stone_workshop_order_id.state != 'cancel':
@@ -550,7 +550,7 @@ class SaleOrder(models.Model):
                 'Revisa estas condiciones:\n'
                 '- La orden debe estar confirmada.\n'
                 '- La línea debe tener producto almacenable/consumible.\n'
-                '- Requiere taller debe estar activo.\n'
+                '- Solo taller debe estar activo.\n'
                 '- Debe tener producto base.\n'
                 '- Debe tener proceso de taller.\n'
                 '- No debe tener ya una OT vinculada.\n\n'

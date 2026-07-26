@@ -21,9 +21,12 @@ class SaleOrderLine(models.Model):
     _inherit = 'sale.order.line'
 
     stone_workshop_required = fields.Boolean(
-        string='Requiere taller',
+        string='Solo taller',
         copy=True,
-        help='Indica que esta línea vende un producto final que debe producirse o transformarse en taller.',
+        help='El producto final de esta línea se produce/transforma en taller '
+             'a partir del producto base. La cantidad solicitada no depende '
+             'del stock del producto final (equivale a "Mandar a pedir" pero '
+             'hacia taller).',
     )
     stone_workshop_auto_create = fields.Boolean(
         string='Crear OT automática',
@@ -1112,7 +1115,7 @@ class SaleOrderLine(models.Model):
         if self.order_id.state == 'cancel':
             raise UserError(_('La orden de venta está cancelada; no puedes seleccionar placas.'))
         if not self.stone_workshop_required:
-            raise UserError(_('La línea no está marcada como Requiere taller.'))
+            raise UserError(_('La línea no está marcada como Solo taller.'))
         if not self.stone_workshop_base_product_id:
             raise UserError(_('Configura el producto base antes de seleccionar placas.'))
         if not self.stone_workshop_process_id:

@@ -26,7 +26,7 @@ class ProductTemplate(models.Model):
     _inherit = 'product.template'
 
     stone_workshop_required = fields.Boolean(
-        string='Requiere taller',
+        string='Solo taller',
         copy=True,
         help='Indica que este producto se vende como producto final que debe producirse o transformarse en taller.',
     )

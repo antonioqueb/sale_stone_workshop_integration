@@ -19,6 +19,18 @@
                 </button>
             </xpath>
 
+            <!-- "Solo taller" vive en las LÍNEAS DE LA ORDEN: al activarlo, la
+                 cantidad solicitada se puede editar libremente sin el tope de
+                 stock (el producto final se fabrica en taller; equivale a
+                 "Mandar a pedir" pero hacia taller). -->
+            <xpath expr="//page[@name='order_lines']//field[@name='order_line']/list/field[@name='product_uom_qty']"
+                   position="after">
+                <field name="stone_workshop_required"
+                       string="Solo taller"
+                       widget="boolean_toggle"
+                       optional="show"/>
+            </xpath>
+
             <!-- ========================================================= -->
             <!-- Pestaña Taller: duplica las líneas con la configuración de -->
             <!-- taller. El grid principal de Líneas de la orden queda      -->
@@ -36,9 +48,11 @@
                             <field name="product_template_id" string="Producto" readonly="1"/>
                             <field name="product_uom_qty" string="Solicitado" readonly="1"/>
 
-                            <field name="stone_workshop_required"
-                                   string="Requiere taller"
-                                   widget="boolean_toggle"/>
+                            <!-- El toggle "Solo taller" se movió a Líneas de la
+                                 orden; aquí queda oculto (las demás columnas
+                                 dependen de su valor). Esta pestaña solo
+                                 configura origen/proceso/placas. -->
+                            <field name="stone_workshop_required" column_invisible="True"/>
 
                             <field name="stone_workshop_base_product_id"
                                    string="Producto origen"
