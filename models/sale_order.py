@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import logging
 
+from markupsafe import Markup
+
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
@@ -412,21 +414,21 @@ class SaleOrder(models.Model):
                 first_order = chain_orders[0]
 
                 if len(chain_orders) == 1:
-                    body = _(
+                    body = Markup(_(
                         'Se creó la orden de taller '
                         '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
                         'para producir <strong>%(final)s</strong> desde <strong>%(base)s</strong>.'
-                    ) % {
+                    )) % {
                         'id': first_order.id,
                         'name': first_order.name,
                         'final': line.product_id.display_name,
                         'base': line.stone_workshop_base_product_id.display_name,
                     }
                 else:
-                    body = _(
+                    body = Markup(_(
                         'Se creó una cadena de %(count)s órdenes de taller para producir '
                         '<strong>%(final)s</strong>: %(chain)s.'
-                    ) % {
+                    )) % {
                         'count': len(chain_orders),
                         'final': line.product_id.display_name,
                         'chain': ' → '.join(chain_orders.mapped('name')),

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import logging
 
+from markupsafe import Markup
+
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 from odoo.tools.float_utils import float_compare
@@ -1249,12 +1251,12 @@ class WorkshopOrder(models.Model):
                 # Aviso VISIBLE: antes esto solo quedaba en el log del
                 # servidor y el usuario no tenía forma de saber por qué el
                 # siguiente paso quedó sin material.
-                order.message_post(body=_(
+                order.message_post(body=Markup(_(
                     '⚠ El siguiente proceso <strong>%(next)s</strong> NO se alimentó: esta orden '
                     'no produjo lotes de <strong>%(product)s</strong> (el producto que ese paso '
                     'consume). Revisa el producto de salida de esta orden o alimenta el '
                     'siguiente paso manualmente.'
-                ) % {
+                )) % {
                     'next': nxt.name,
                     'product': nxt.input_product_id.display_name,
                 })
@@ -1319,10 +1321,12 @@ class WorkshopOrder(models.Model):
             )
 
             # Rastro en la orden que terminó, con liga al siguiente paso.
-            order.message_post(body=_(
+            # Markup: message_post escapa strings planos; sin esto la liga se
+            # mostraba como código HTML literal en el chatter.
+            order.message_post(body=Markup(_(
                 'El material producido alimentó automáticamente el siguiente proceso '
                 '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a>: %(lots)s.'
-            ) % {
+            )) % {
                 'id': nxt.id,
                 'name': nxt.name,
                 'lots': ', '.join(produced.mapped('lot_id.name')),

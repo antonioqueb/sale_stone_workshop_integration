@@ -2,6 +2,8 @@
 import json
 import logging
 
+from markupsafe import Markup
+
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 from odoo.tools.float_utils import float_compare
@@ -891,12 +893,12 @@ class SaleOrderLine(models.Model):
                         skip_stone_workshop_chain_resync=True,
                     ).write({'workshop_order_id': workshop.id})
 
-                    order.message_post(body=_(
+                    order.message_post(body=Markup(_(
                         'Se creó la orden de taller '
                         '<a href="#" data-oe-model="workshop.order" data-oe-id="%(id)s">%(name)s</a> '
                         'para el paso %(seq)s de la cadena de <strong>%(final)s</strong> '
                         '(agregado tras la confirmación).'
-                    ) % {
+                    )) % {
                         'id': workshop.id,
                         'name': workshop.name,
                         'seq': step['sequence'],
