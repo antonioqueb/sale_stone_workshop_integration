@@ -58,6 +58,8 @@ class ProductTemplate(models.Model):
         string='Modo taller',
         default='slab_finish',
         copy=True,
+        help='Informativo/comercial. El modo operativo real de la orden de taller '
+             'lo dicta siempre el proceso seleccionado (su "modo operativo sugerido").',
     )
 
     stone_workshop_trigger = fields.Selection(

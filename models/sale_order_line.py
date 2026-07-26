@@ -169,19 +169,35 @@ class SaleOrderLine(models.Model):
         help='Campo técnico para reportes personalizados. El integrador no altera reportes fiscales estándar.',
     )
 
+    def _stone_workshop_chain_orders(self):
+        """Cadena completa de OTs de la línea, en orden de ejecución.
+
+        La línea solo guarda la PRIMERA orden (`stone_workshop_order_id`);
+        los pasos siguientes se recorren vía `stone_workshop_chain_next_order_id`.
+        Con guarda anti-ciclos por si un enlace quedó corrupto.
+        """
+        self.ensure_one()
+        chain = self.env['workshop.order']
+        order = self.stone_workshop_order_id
+        guard = 0
+        while order and order.id not in chain.ids and guard < 50:
+            chain |= order
+            order = order.stone_workshop_chain_next_order_id
+            guard += 1
+        return chain
+
     @api.depends(
         'stone_workshop_required',
         'stone_workshop_order_id.state',
         'stone_workshop_order_id.input_line_ids.state',
         'stone_workshop_order_id.output_line_ids.state',
         'stone_workshop_order_id.output_line_ids.lot_id',
+        'stone_workshop_order_id.stone_workshop_chain_next_order_id.state',
         'stone_workshop_input_selection_ids.state',
         'lot_ids',
     )
     def _compute_stone_workshop_status(self):
         for line in self:
-            order = line.stone_workshop_order_id
-
             if not line.stone_workshop_required:
                 line.stone_workshop_assignment_state = 'none'
                 continue
@@ -190,29 +206,40 @@ class SaleOrderLine(models.Model):
                 lambda s: s.state != 'cancelled'
             )
 
-            if not order:
+            if not line.stone_workshop_order_id:
                 line.stone_workshop_assignment_state = 'reserved_inputs' if active_selections else 'pending_inputs'
                 continue
 
-            if order.state == 'cancel':
+            # Con cadena de procesos, el producto final lo produce la ÚLTIMA
+            # orden, no la primera: el estado se evalúa sobre toda la cadena.
+            chain = line._stone_workshop_chain_orders()
+            active_chain = chain.filtered(lambda o: o.state != 'cancel')
+
+            if not active_chain:
                 line.stone_workshop_assignment_state = 'cancelled'
                 continue
 
-            input_lines = order.input_line_ids.filtered(lambda l: l.state != 'cancelled')
-            output_lines = order.output_line_ids.filtered(lambda l: l.state != 'cancelled')
+            first_order = active_chain[0]
+            final_order = active_chain[-1]
 
-            final_output_lots = output_lines.filtered(
+            input_lines = first_order.input_line_ids.filtered(lambda l: l.state != 'cancelled')
+            chain_outputs = active_chain.mapped('output_line_ids').filtered(
+                lambda l: l.state != 'cancelled'
+            )
+
+            final_output_lots = final_order.output_line_ids.filtered(
                 lambda o:
-                    o.output_type not in ('scrap', 'rejected')
+                    o.state != 'cancelled'
+                    and o.output_type not in ('scrap', 'rejected')
                     and o.product_id == line.product_id
                     and o.lot_id
             ).mapped('lot_id')
 
             if final_output_lots and set(final_output_lots.ids).issubset(set(line.lot_ids.ids)):
                 line.stone_workshop_assignment_state = 'assigned'
-            elif order.state == 'in_workshop':
+            elif any(o.state == 'in_workshop' for o in active_chain):
                 line.stone_workshop_assignment_state = 'in_workshop'
-            elif output_lines:
+            elif chain_outputs:
                 line.stone_workshop_assignment_state = 'outputs_pending'
             elif input_lines.filtered(lambda l: l.state == 'reserved_for_workshop') or active_selections:
                 line.stone_workshop_assignment_state = 'reserved_inputs'
@@ -234,10 +261,17 @@ class SaleOrderLine(models.Model):
             output_lots = self.env['stock.lot']
 
             if order:
-                input_lots = order.input_line_ids.filtered(
+                # Entradas: primera orden de la cadena (consume el producto base).
+                # Salidas finales: última orden activa (produce el producto vendido).
+                chain = line._stone_workshop_chain_orders()
+                active_chain = chain.filtered(lambda o: o.state != 'cancel')
+                first_order = active_chain[0] if active_chain else order
+                final_order = active_chain[-1] if active_chain else order
+
+                input_lots = first_order.input_line_ids.filtered(
                     lambda l: l.state != 'cancelled' and l.lot_id
                 ).mapped('lot_id')
-                output_lots = order.output_line_ids.filtered(
+                output_lots = final_order.output_line_ids.filtered(
                     lambda l:
                         l.state != 'cancelled'
                         and l.output_type not in ('scrap', 'rejected')
@@ -448,6 +482,33 @@ class SaleOrderLine(models.Model):
 
         return res
 
+    def unlink(self):
+        """Al borrar la línea no deben quedar OTs huérfanas reservando stock.
+
+        `workshop.order.sale_line_id` es ondelete='set null': sin este guard,
+        borrar la línea dejaba la OT viva con su picking de reserva bloqueando
+        las placas para siempre. OTs en borrador se cancelan (libera reserva y
+        selecciones); OTs en taller bloquean el borrado.
+        """
+        real_lines = self.filtered(lambda l: not l.display_type)
+        if real_lines:
+            workshops = self.env['workshop.order'].search([
+                ('sale_line_id', 'in', real_lines.ids),
+                ('state', 'in', ('draft', 'in_workshop')),
+            ])
+            blocking = workshops.filtered(lambda o: o.state == 'in_workshop')
+            if blocking:
+                raise UserError(_(
+                    'No puedes eliminar la línea porque tiene órdenes de taller en '
+                    'proceso con material consumido: %s.'
+                ) % ', '.join(blocking.mapped('name')))
+
+            draft_workshops = workshops - blocking
+            if draft_workshops:
+                draft_workshops.action_cancel()
+
+        return super().unlink()
+
     # -------------------------------------------------------------------------
     # Auto-creación / sincronización de OT en órdenes confirmadas
     # -------------------------------------------------------------------------
@@ -477,7 +538,7 @@ class SaleOrderLine(models.Model):
             if line.display_type or line.stone_is_workshop_service_line:
                 continue
 
-            if line.stone_workshop_order_id:
+            if line.stone_workshop_order_id and line.stone_workshop_order_id.state != 'cancel':
                 line._stone_workshop_sync_existing_order()
                 continue
 
@@ -510,9 +571,14 @@ class SaleOrderLine(models.Model):
 
         vals = {}
 
-        target = self.product_uom_qty or 0.0
+        target_vals = self._stone_workshop_production_target_vals()
+        target = target_vals.get('production_target_sqm') or 0.0
         if abs((workshop_order.production_target_sqm or 0.0) - target) > 0.0001:
             vals['production_target_sqm'] = target
+
+        target_pieces = target_vals.get('target_pieces') or 1
+        if (workshop_order.target_pieces or 1) != target_pieces:
+            vals['target_pieces'] = target_pieces
 
         process = self.stone_workshop_process_id
         if process and workshop_order.process_id != process:
@@ -599,7 +665,7 @@ class SaleOrderLine(models.Model):
 
         if not self.stone_workshop_required:
             return False
-        if self.stone_workshop_order_id:
+        if self.stone_workshop_order_id and self.stone_workshop_order_id.state != 'cancel':
             return False
         if not self.stone_workshop_auto_create:
             return False
@@ -617,6 +683,16 @@ class SaleOrderLine(models.Model):
         if trigger == 'always':
             return True
 
+        return self._stone_workshop_shortage_detected()
+
+    def _stone_workshop_shortage_detected(self):
+        """True si el producto final vendido NO está cubierto por inventario.
+
+        Cubierto = reservado/hecho en esta línea + libre real del producto
+        final en el almacén de la orden.
+        """
+        self.ensure_one()
+
         line_uom = self._stone_workshop_get_line_uom()
         rounding = (
             (line_uom.rounding if line_uom else 0.0)
@@ -630,6 +706,50 @@ class SaleOrderLine(models.Model):
         covered = reserved_on_sale + free_final
 
         return float_compare(covered, required, precision_rounding=rounding) < 0
+
+    def _stone_workshop_production_target_vals(self):
+        """Objetivo de producción de la OT según la UoM del producto vendido.
+
+        `production_target_sqm` son m²: solo se llena con la cantidad vendida
+        cuando la UoM del producto es de área. Para productos por pieza se
+        deja en 0 (el taller usa el área de entrada como objetivo de corte) y
+        la cantidad va a `target_pieces`; antes se copiaban las piezas como si
+        fueran m², distorsionando estimados de tiempo y validaciones de corte.
+        """
+        self.ensure_one()
+        qty = self.product_uom_qty or 0.0
+        Selection = self.env['sale.stone.workshop.input.selection']
+
+        if self.product_id and Selection._product_uom_is_area(self.product_id):
+            return {'production_target_sqm': qty, 'target_pieces': 1}
+
+        return {'production_target_sqm': 0.0, 'target_pieces': int(qty) or 1}
+
+    def _stone_workshop_confirm_should_create(self):
+        """Decide si al confirmar la venta esta línea debe generar su OT.
+
+        Regla:
+        - Si el vendedor ya seleccionó placas base, la intención es explícita:
+          SIEMPRE se crea la OT (comportamiento histórico del flujo visual).
+        - Sin selección de placas, se respeta la configuración del producto:
+          `auto_create` desactivado o disparador Manual NO crean OT, y con
+          disparador "Solo si falta inventario final" se verifica el faltante
+          (permite surtir del stock de producto final existente).
+        """
+        self.ensure_one()
+
+        if self._stone_workshop_active_input_selections():
+            return True
+        if not self.stone_workshop_auto_create:
+            return False
+
+        trigger = self.stone_workshop_trigger or 'on_shortage'
+        if trigger == 'manual':
+            return False
+        if trigger == 'always':
+            return True
+
+        return self._stone_workshop_shortage_detected()
 
     # -------------------------------------------------------------------------
     # Selección de placas base para taller desde la venta

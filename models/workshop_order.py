@@ -109,6 +109,22 @@ class WorkshopOrder(models.Model):
                 picking and picking.state not in ('cancel', 'done')
             )
 
+    def write(self, vals):
+        res = super().write(vals)
+        # El estado de asignación de la línea de venta depende de TODA la
+        # cadena de OTs, pero los @api.depends solo alcanzan un nivel de
+        # stone_workshop_chain_next_order_id. Cuando cambia el estado de
+        # cualquier paso (p. ej. el 2º o 3º de la cadena), se encola la
+        # recomputación explícitamente.
+        if 'state' in vals:
+            lines = self.mapped('sale_line_id').exists()
+            if lines:
+                self.env.add_to_compute(
+                    lines._fields['stone_workshop_assignment_state'],
+                    lines,
+                )
+        return res
+
     # ------------------------------------------------------------------
     # Panel del taller: enriquecer la tarjeta con datos comerciales
     # ------------------------------------------------------------------
@@ -310,9 +326,13 @@ class WorkshopOrder(models.Model):
         if not lot_ids or not product_ids:
             return self.env['stock.picking']
 
+        # `=like` con "S00012 / %": el origen de estas reservas siempre es
+        # "<pedido> / <OT> - Reserva taller". Un ilike simple del nombre del
+        # pedido también matcheaba prefijos (S00012 vs S000123) y podía
+        # cancelar reservas de otra venta como si fueran obsoletas.
         domain = [
             ('state', 'not in', ('done', 'cancel')),
-            ('origin', 'ilike', self.sale_order_id.name),
+            ('origin', '=like', '%s / %%' % self.sale_order_id.name),
             ('origin', 'ilike', 'Reserva taller'),
             ('move_ids.move_line_ids.lot_id', 'in', lot_ids),
             ('move_ids.move_line_ids.product_id', 'in', product_ids),
@@ -961,13 +981,37 @@ class WorkshopOrder(models.Model):
                     and order._sale_workshop_all_inputs_covered_by_own_reservation()
                 ):
                     _logger.warning(
-                        '[STONE WORKSHOP SALE] Se ignoró falso negativo de stock en %s '
-                        'porque los insumos están cubiertos por su propia reserva %s. '
+                        '[STONE WORKSHOP SALE] Falso negativo de stock en %s: los '
+                        'insumos están cubiertos por su propia reserva %s. Se '
+                        're-validan las demás reglas sin el chequeo de cantidad. '
                         'Error original: %s',
                         order.name,
                         order.sale_workshop_reservation_picking_id.name,
                         str(error),
                     )
+                    # Antes se hacía `continue` y se perdían las validaciones
+                    # que venían DESPUÉS del punto que lanzó el error (lotes
+                    # duplicados, conflicto con otra OT activa, salidas). Se
+                    # re-ejecuta todo saltando solo el chequeo de cantidad,
+                    # que ya está cubierto por la reserva propia.
+                    try:
+                        super(
+                            WorkshopOrder,
+                            order.with_context(workshop_skip_qty_check=True),
+                        )._validate_business_rules()
+                    except UserError as retry_error:
+                        retry_message = str(retry_error).lower()
+                        if any(term in retry_message for term in stock_error_terms):
+                            # Error de stock de otro validador externo: se
+                            # conserva la válvula de seguridad original.
+                            _logger.warning(
+                                '[STONE WORKSHOP SALE] Re-validación de %s aún '
+                                'reporta stock; se ignora por reserva propia: %s',
+                                order.name,
+                                str(retry_error),
+                            )
+                            continue
+                        raise
                     continue
 
                 raise
@@ -1019,6 +1063,10 @@ class WorkshopOrder(models.Model):
                 'state': 'in_workshop',
                 'date_start': order.date_start or fields.Datetime.now(),
             })
+            # Igual que el flujo base: el cronómetro arranca al enviar a
+            # taller. Sin esto, las OTs de venta nunca registraban sesiones de
+            # trabajo (sin avance por tiempo y sin regla de 24 h de pausa).
+            order._start_work_session()
             order._sale_workshop_sync_selection_states()
 
             order.message_post(
@@ -1047,8 +1095,44 @@ class WorkshopOrder(models.Model):
             self.with_context(**self._sale_workshop_stock_context()),
         ).action_declare_result()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
+        self._sale_workshop_release_unused_selections()
         self._stone_workshop_feed_next_chain_orders()
         return res
+
+    def _sale_workshop_release_unused_selections(self):
+        """Libera las selecciones de placas devueltas como no usadas.
+
+        Al declarar el resultado, las placas nunca registradas en bitácora se
+        devuelven al stock origen con su línea de entrada en 'pending'. Si la
+        selección comercial quedara activa ('selected'), la placa seguiría
+        contando como comprometida en los selectores de venta y taller aunque
+        físicamente esté disponible. Aquí se cancela esa selección para
+        liberarla de verdad.
+        """
+        for order in self:
+            stale = order.sale_workshop_input_selection_ids.filtered(
+                lambda s:
+                    s.state != 'cancelled'
+                    and s.workshop_input_line_id
+                    and not s.workshop_input_line_id.is_consumed
+                    and s.workshop_input_line_id.state == 'pending'
+            )
+            if not stale:
+                continue
+
+            lots = ', '.join(stale.mapped('lot_id.name'))
+            stale.write({'state': 'cancelled'})
+            order.message_post(body=_(
+                'Selecciones liberadas por devolución de placas no usadas: %s.'
+            ) % lots)
+
+            if order.sale_order_id:
+                order.sale_order_id.message_post(body=_(
+                    'Taller %(workshop)s devolvió placas no usadas al stock; '
+                    'quedaron liberadas para otras ventas: %(lots)s.'
+                ) % {'workshop': order.name, 'lots': lots})
+
+        return True
 
     def _stone_workshop_feed_next_chain_orders(self):
         """Alimenta la siguiente orden de la cadena con los lotes producidos.

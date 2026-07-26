@@ -75,18 +75,145 @@ class SaleOrder(models.Model):
                 confirmed_orders |= order
 
         if confirmed_orders:
-            # Al confirmar venta SIEMPRE se crea la OT de las líneas elegibles
-            # (las que tienen producto base, proceso y requieren taller). Se
-            # ignoran los gates de auto_create, trigger=manual y needs_supply
-            # porque el usuario explícitamente seleccionó placas y proceso para
-            # esa línea — ya no es necesario un botón "Crear OT taller".
+            confirmed_orders._stone_workshop_ensure_service_lines()
+
+            # Líneas elegibles (producto base + proceso + requiere taller).
+            # Si el vendedor seleccionó placas base la OT se crea siempre
+            # (intención explícita, sin botón manual). Sin selección, se
+            # respeta la configuración del producto: auto_create desactivado,
+            # disparador Manual o "solo si falta inventario final" con stock
+            # suficiente NO generan OT.
             candidate_lines = confirmed_orders._stone_workshop_manual_candidate_lines()
-            if candidate_lines:
+            eligible_lines = self.env['sale.order.line']
+
+            for line in candidate_lines:
+                if line._stone_workshop_confirm_should_create():
+                    eligible_lines |= line
+                else:
+                    _logger.info(
+                        '[STONE WORKSHOP SALE] Línea %s (%s) sin OT al confirmar: '
+                        'configuración del producto (auto_create=%s, trigger=%s) '
+                        'o inventario final suficiente.',
+                        line.id,
+                        line.product_id.display_name if line.product_id else '',
+                        line.stone_workshop_auto_create,
+                        line.stone_workshop_trigger,
+                    )
+
+            if eligible_lines:
                 confirmed_orders._stone_workshop_create_missing_orders(
-                    force_lines=candidate_lines,
+                    force_lines=eligible_lines,
                 )
 
         return res
+
+    # -------------------------------------------------------------------------
+    # Modo comercial "service_line": línea de servicio de taller separada
+    # -------------------------------------------------------------------------
+
+    def _stone_workshop_ensure_service_lines(self):
+        """Crea la línea de servicio de taller para las líneas configuradas.
+
+        Cuando el producto vendido tiene modo comercial 'Agregar servicio de
+        taller' y un servicio sugerido, al confirmar la venta se agrega una
+        línea de servicio (marcada con `stone_is_workshop_service_line` y
+        ligada a su línea padre). El precio lo calcula el flujo estándar de
+        tarifas. Idempotente: si la línea de servicio ya existe, no duplica.
+        """
+        SaleLine = self.env['sale.order.line']
+
+        for order in self:
+            for line in order.order_line:
+                if line.display_type or line.stone_is_workshop_service_line:
+                    continue
+                if not line.stone_workshop_required:
+                    continue
+                if line.stone_workshop_commercial_mode != 'service_line':
+                    continue
+
+                service_product = line.stone_workshop_service_product_id
+                if not service_product:
+                    continue
+
+                existing = order.order_line.filtered(
+                    lambda l:
+                        l.stone_is_workshop_service_line
+                        and l.stone_workshop_parent_line_id == line
+                )
+                if existing:
+                    continue
+
+                service_line = SaleLine.with_context(
+                    skip_stone_workshop_autosync=True,
+                ).create({
+                    'order_id': order.id,
+                    'product_id': service_product.id,
+                    'product_uom_qty': line.product_uom_qty or 1.0,
+                    'sequence': (line.sequence or 10) + 1,
+                    'stone_is_workshop_service_line': True,
+                    'stone_workshop_parent_line_id': line.id,
+                    'stone_workshop_required': False,
+                })
+
+                order.message_post(body=_(
+                    'Se agregó la línea de servicio de taller %(service)s para '
+                    '%(product)s (modo comercial: servicio separado).'
+                ) % {
+                    'service': service_line.product_id.display_name,
+                    'product': line.product_id.display_name,
+                })
+
+        return True
+
+    # -------------------------------------------------------------------------
+    # Cancelación de la venta: liberar taller, reservas y selecciones
+    # -------------------------------------------------------------------------
+
+    def _action_cancel(self):
+        """Al cancelar la venta se libera todo lo comprometido con taller.
+
+        - OTs en borrador: se cancelan (eso libera su picking de reserva y
+          marca sus selecciones como canceladas).
+        - OTs en taller: bloquean la cancelación — el material ya se consumió
+          físicamente; hay que declarar el resultado o resolver la OT primero.
+        - Selecciones sin OT: se cancelan para que las placas dejen de estar
+          comprometidas en los selectores.
+        """
+        blocking = self.env['workshop.order'].search([
+            ('sale_order_id', 'in', self.ids),
+            ('state', '=', 'in_workshop'),
+        ])
+        if blocking:
+            raise UserError(_(
+                'No puedes cancelar la venta porque hay órdenes de taller en proceso '
+                'con material ya consumido: %s.\n\n'
+                'Declara el resultado o resuelve esas órdenes antes de cancelar.'
+            ) % ', '.join(blocking.mapped('name')))
+
+        res = super()._action_cancel()
+        self._stone_workshop_release_on_cancel()
+        return res
+
+    def _stone_workshop_release_on_cancel(self):
+        for order in self:
+            draft_workshops = self.env['workshop.order'].search([
+                ('sale_order_id', '=', order.id),
+                ('state', '=', 'draft'),
+            ])
+            if draft_workshops:
+                draft_workshops.action_cancel()
+                order.message_post(body=_(
+                    'Venta cancelada: se cancelaron las órdenes de taller %s y se '
+                    'liberaron sus reservas de placas base.'
+                ) % ', '.join(draft_workshops.mapped('name')))
+
+            leftover = order.stone_workshop_input_selection_ids.filtered(
+                lambda s: s.state not in ('cancelled', 'moved_to_workshop')
+            )
+            if leftover:
+                leftover.write({'state': 'cancelled'})
+
+        return True
 
     # -------------------------------------------------------------------------
     # Preparación de valores
@@ -145,15 +272,18 @@ class SaleOrder(models.Model):
             'process': process.display_name or '',
         }
 
+        # OJO: no se pasa operation_mode. Los valores del selector comercial
+        # (cut_to_size, edge_finish, custom_process) NO existen en
+        # workshop.order.operation_mode (slab_cut, format_process, rework);
+        # pasar uno de esos valores reventaría con "valor inválido" si el
+        # proceso no trae default_operation_mode. El modo operativo real
+        # siempre lo dicta el proceso en workshop.order.create/_compute.
         vals = {
             'sale_order_id': self.id,
             'sale_line_id': line.id,
-            'operation_mode': line.stone_workshop_operation_mode or 'slab_finish',
             'process_id': process.id,
             'input_product_id': input_product.id,
             'default_product_out_id': output_product.id,
-            'production_target_sqm': line.product_uom_qty or 0.0,
-            'target_pieces': 1,
             'warehouse_id': warehouse.id if warehouse else False,
             'location_src_id': location_src.id if location_src else False,
             'location_dest_id': location_src.id if location_src else False,
@@ -166,6 +296,7 @@ class SaleOrder(models.Model):
             'notes': notes,
             'stone_workshop_chain_sequence': sequence,
         }
+        vals.update(line._stone_workshop_production_target_vals())
 
         return vals
 
@@ -186,7 +317,9 @@ class SaleOrder(models.Model):
             return _('el producto es de tipo servicio.')
         if not line.stone_workshop_required:
             return _('no está marcada como Requiere taller.')
-        if line.stone_workshop_order_id:
+        # Una OT cancelada no cuenta como vinculada: si la venta se canceló y
+        # se volvió a confirmar, la línea debe poder generar una OT nueva.
+        if line.stone_workshop_order_id and line.stone_workshop_order_id.state != 'cancel':
             return _('ya tiene una orden de taller vinculada.')
         if not line.stone_workshop_base_product_id:
             return _('no tiene producto base configurado.')
@@ -330,6 +463,17 @@ class SaleOrder(models.Model):
         y los alimente automáticamente.
         """
         self.ensure_one()
+
+        # Validación temprana: dos cotizaciones (o dos líneas del mismo
+        # pedido) pueden seleccionar la misma placa mientras están en
+        # borrador, porque las selecciones solo comprometen con la venta
+        # confirmada. Aquí, ya con la orden confirmada, se re-verifica que
+        # ninguna placa seleccionada esté comprometida en otro documento;
+        # sin esto el conflicto explotaba mucho después, al enviar a taller,
+        # con un error de stock confuso.
+        selection_lot_ids = line._stone_workshop_active_input_selections().mapped('lot_id').ids
+        if selection_lot_ids:
+            line._stone_workshop_validate_lots_not_committed_elsewhere(selection_lot_ids)
 
         WorkshopOrder = self.env['workshop.order']
         chain_orders = WorkshopOrder

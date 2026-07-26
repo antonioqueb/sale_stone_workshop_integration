@@ -44,7 +44,15 @@ class StockQuant(models.Model):
             if order.state in ACTIVE_WORKSHOP_STATES:
                 committed_ids.add(line.lot_id.id)
                 continue
-            if order.sale_order_id and line.state in SALE_LINKED_INPUT_STATES:
+            # Solo OTs en borrador comprometen por venta. Una línea 'pending'
+            # de una OT terminada (placa devuelta como no usada al declarar el
+            # resultado) o cancelada NO debe seguir bloqueando el lote: la
+            # placa ya está físicamente de vuelta en el stock disponible.
+            if (
+                order.sale_order_id
+                and order.state == 'draft'
+                and line.state in SALE_LINKED_INPUT_STATES
+            ):
                 committed_ids.add(line.lot_id.id)
 
         selections = self.env['sale.stone.workshop.input.selection'].search([
