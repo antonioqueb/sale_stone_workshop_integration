@@ -184,6 +184,7 @@ export class WorkshopChainStepEditor extends Component {
     static props = { "*": true };
 
     setup() {
+        this.notification = useService("notification");
         this.state = useState({
             productTerm: "",
             productOptions: [],
@@ -214,6 +215,17 @@ export class WorkshopChainStepEditor extends Component {
         try {
             const results = await this.props.searchProducts(term);
             this.state.productOptions = results.map(([id, name]) => ({ id, name }));
+        } catch (error) {
+            // Sin esto el buscador moría en silencio y parecía que "no
+            // dejaba" seleccionar el producto intermedio.
+            this.state.productOptions = [];
+            this.notification.add(
+                _t("No se pudo buscar productos: %s").replace(
+                    "%s",
+                    (error && error.message) || error
+                ),
+                { type: "danger" }
+            );
         } finally {
             this.state.searching = false;
         }
