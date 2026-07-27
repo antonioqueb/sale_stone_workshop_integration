@@ -1,6 +1,6 @@
 /** @odoo-module **/
 
-import { Component, onWillStart, useState } from "@odoo/owl";
+import { Component, onMounted, onWillStart, useRef, useState } from "@odoo/owl";
 import { registry } from "@web/core/registry";
 import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
@@ -63,6 +63,14 @@ export class WorkshopChainValidationBanner extends Component {
 export class ProductNode extends Component {
     static template = "sale_stone_workshop_integration.ProductNode";
     static props = { "*": true };
+
+    onClick() {
+        // Los nodos "Intermedio" abren el editor del paso que los entrega:
+        // "Sin definir" deja de ser un letrero y se vuelve accionable.
+        if (this.props.editKey && this.props.onEdit) {
+            this.props.onEdit(this.props.editKey);
+        }
+    }
 }
 
 export class ProcessNode extends Component {
@@ -116,6 +124,8 @@ export class WorkshopChainDiagram extends Component {
                       : "missing",
                 tag: isLast ? _t("Vendido") : _t("Intermedio"),
                 product: isLast ? line.sold_product : row.deliver,
+                // El intermedio se edita en la "Entrega" del paso anterior.
+                editKey: !isLast && row.canEditDeliver ? row.key : null,
                 highlighted:
                     row.key === selectedKey ||
                     (!isLast && rows[index + 1] && rows[index + 1].key === selectedKey),
@@ -191,6 +201,20 @@ export class WorkshopChainStepEditor extends Component {
             searching: false,
         });
         this._searchTimeout = null;
+        this.productInputRef = useRef("productInput");
+        onMounted(() => {
+            // Si el paso aún no define su entrega, llevar al usuario directo
+            // al buscador (y la lista se llena sola vía onProductFocus).
+            if (this.row.canEditDeliver && !this.row.deliver && this.productInputRef.el) {
+                this.productInputRef.el.focus();
+            }
+        });
+    }
+
+    onProductFocus() {
+        if (!this.state.productOptions.length && !this.state.searching) {
+            this.searchProducts(this.state.productTerm || "");
+        }
     }
 
     get row() {

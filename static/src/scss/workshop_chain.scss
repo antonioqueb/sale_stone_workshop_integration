@@ -186,6 +186,22 @@
         &.o_sw_highlighted {
             box-shadow: 0 0 0 3px rgba(113, 75, 103, 0.25);
         }
+
+        // Nodo "Intermedio": clic abre el editor del paso que lo entrega.
+        &.o_sw_clickable {
+            cursor: pointer;
+
+            &:hover {
+                box-shadow: 0 0 0 3px rgba(113, 75, 103, 0.2);
+            }
+        }
+
+        .o_sw_node_hint {
+            font-size: 10px;
+            font-weight: 600;
+            margin-top: 4px;
+            opacity: 0.8;
+        }
     }
 
     .o_sw_node_process {
@@ -246,6 +262,21 @@
         .o_sw_col_actions {
             width: 90px;
             white-space: nowrap;
+        }
+
+        // Celda "Entrega" editable: clic directo abre el editor del paso.
+        .o_sw_cell_editable:hover {
+            background: rgba(113, 75, 103, 0.08);
+
+            .o_sw_cell_edit_icon {
+                opacity: 1;
+            }
+        }
+
+        .o_sw_cell_edit_icon {
+            color: #714b67;
+            opacity: 0.35;
+            transition: opacity 0.12s ease;
         }
     }
 

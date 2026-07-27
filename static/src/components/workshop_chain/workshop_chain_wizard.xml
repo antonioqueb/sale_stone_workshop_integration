@@ -15,10 +15,15 @@
     <!-- ================= Nodos del diagrama ================= -->
     <t t-name="sale_stone_workshop_integration.ProductNode">
         <div class="o_sw_node o_sw_node_product"
-             t-att-class="(props.product ? 'o_sw_' + props.kind : 'o_sw_missing') + (props.highlighted ? ' o_sw_highlighted' : '')">
+             t-att-class="(props.product ? 'o_sw_' + props.kind : 'o_sw_missing') + (props.highlighted ? ' o_sw_highlighted' : '') + (props.editKey ? ' o_sw_clickable' : '')"
+             t-att-title="props.editKey ? 'Clic para definir el producto intermedio' : undefined"
+             t-on-click="onClick">
             <span class="o_sw_node_tag" t-out="props.tag"/>
             <span class="o_sw_node_name"
                   t-out="props.product ? props.product.name : 'Sin definir'"/>
+            <span t-if="props.editKey and !props.product" class="o_sw_node_hint">
+                <i class="fa fa-pencil me-1" role="img" aria-label="definir"/>Clic para definir
+            </span>
         </div>
     </t>
 
@@ -52,7 +57,9 @@
                              product="node.product"
                              kind="node.kind"
                              tag="node.tag"
-                             highlighted="node.highlighted"/>
+                             highlighted="node.highlighted"
+                             editKey="node.editKey"
+                             onEdit="props.onEdit"/>
                 <ProcessNode t-else=""
                              row="node.row"
                              selected="node.selected"
@@ -101,10 +108,13 @@
                 <span t-if="row.receive" t-out="row.receive.name"/>
                 <span t-else="" class="o_sw_missing_text">Sin definir</span>
             </td>
-            <td>
+            <td t-att-class="row.canEditDeliver ? 'o_sw_cell_editable' : ''"
+                t-att-title="row.canEditDeliver ? 'Clic para definir la entrega de este paso' : undefined"
+                t-on-click.stop="() => row.canEditDeliver ? props.onEdit(row.key) : props.onSelect(row.key)">
                 <span t-if="row.deliver" t-out="row.deliver.name"/>
                 <span t-else="" class="o_sw_missing_text">Sin definir</span>
                 <span t-if="row.isLast" class="badge text-bg-success ms-1">Vendido</span>
+                <i t-if="row.canEditDeliver" class="fa fa-pencil ms-2 o_sw_cell_edit_icon" role="img" aria-label="definir entrega"/>
             </td>
             <td>
                 <span t-if="row.ot" t-out="row.ot.name"/>
@@ -238,9 +248,11 @@
                         </div>
                         <input type="text"
                                class="form-control"
+                               t-ref="productInput"
                                placeholder="Buscar producto intermedio…"
                                t-att-value="state.productTerm"
-                               t-on-input="onProductTermInput"/>
+                               t-on-input="onProductTermInput"
+                               t-on-focus="onProductFocus"/>
                         <div t-if="state.productOptions.length" class="o_sw_editor_options list-group mt-1">
                             <t t-foreach="state.productOptions" t-as="option" t-key="option.id">
                                 <button type="button"
@@ -307,7 +319,8 @@
                     <WorkshopChainDiagram rows="rows"
                                           line="state.line"
                                           selectedKey="state.selectedKey"
-                                          onSelect.bind="selectStep"/>
+                                          onSelect.bind="selectStep"
+                                          onEdit.bind="openEditor"/>
 
                     <WorkshopChainStepsTable rows="rows"
                                              selectedKey="state.selectedKey"
