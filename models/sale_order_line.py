@@ -1688,7 +1688,7 @@ class SaleOrderLine(models.Model):
         end = start + page_size
         paged_items = filtered_items[start:end]
 
-        _logger.info(
+        _logger.debug(
             '[SWIS INVENTORY] sale_line=%s sale=%s base_product=%s quants=%s total=%s got=%s committed=%s allowed_current=%s',
             self.id,
             self.order_id.name if self.order_id else '',
