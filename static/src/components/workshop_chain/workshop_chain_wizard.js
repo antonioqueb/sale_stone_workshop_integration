@@ -528,7 +528,8 @@ export class WorkshopChainWizard extends Component {
     async searchProducts(term) {
         return await this.orm.call("product.product", "name_search", [], {
             name: term || "",
-            args: [["tracking", "!=", "none"]],
+            // Odoo 19: name_search recibe "domain"; el kwarg "args" ya no existe.
+            domain: [["tracking", "!=", "none"]],
             limit: 8,
         });
     }
