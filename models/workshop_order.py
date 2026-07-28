@@ -1125,10 +1125,62 @@ class WorkshopOrder(models.Model):
 
         remaining = self - handled
 
+        result = True
         if remaining:
-            return super(WorkshopOrder, remaining).action_confirm_workshop()
+            result = super(WorkshopOrder, remaining).action_confirm_workshop()
 
-        return True
+        # Etapas 2+ de una cadena: ticket de corrida automático — el material
+        # ya está en piso en el taller (es la salida del paso anterior).
+        self._stone_workshop_auto_ticket_chain_stages()
+
+        return result
+
+    def _stone_workshop_auto_ticket_chain_stages(self):
+        """Genera automáticamente el ticket de taller (con TODAS las placas)
+        para órdenes que son paso 2+ de una cadena, al quedar en taller.
+
+        En esas etapas el material no se surte de almacén: ya está en piso
+        porque lo produjo el paso anterior. El operador recibe su ticket
+        listo para imprimir sin pasar por el selector. Nunca debe tumbar la
+        confirmación: cualquier falla solo se registra en log y chatter."""
+        for order in self:
+            if order.state != 'in_workshop':
+                continue
+            prev = order.stone_workshop_chain_prev_order_id
+            if not prev:
+                continue
+            if not hasattr(order, '_workshop_auto_ticket_all_inputs'):
+                continue
+            try:
+                ticket = order._workshop_auto_ticket_all_inputs(notes=_(
+                    'Generado automáticamente: material ya en piso en el '
+                    'taller (paso %(seq)s de la cadena, producido por '
+                    '%(prev)s).'
+                ) % {
+                    'seq': order.stone_workshop_chain_sequence or 2,
+                    'prev': prev.name,
+                })
+            except Exception:
+                _logger.exception(
+                    '[CADENA TALLER] No se pudo generar el ticket automático '
+                    'de %s; puede generarse manualmente con el selector.',
+                    order.name,
+                )
+                order.message_post(body=_(
+                    'No se pudo generar el ticket automático de esta etapa; '
+                    'génera el ticket manualmente con "Generar ticket".'
+                ))
+                continue
+            if ticket:
+                order.message_post(body=_(
+                    'Ticket %(ticket)s generado automáticamente con todas '
+                    'las placas (%(count)s): el material ya está en el '
+                    'taller, producido por el paso anterior %(prev)s.'
+                ) % {
+                    'ticket': ticket.name,
+                    'count': len(ticket.line_ids),
+                    'prev': prev.name,
+                })
 
     def action_declare_result(self):
         # La validación base del picking de entrada de salidas dispara
