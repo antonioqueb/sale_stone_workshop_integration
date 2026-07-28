@@ -432,3 +432,31 @@
         gap: 8px;
     }
 }
+
+// ─── Picker inline de "Entrega" en la fila (sin panel lateral) ───
+.o_sw_cell_deliver {
+    position: relative;
+    min-width: 220px;
+}
+
+.o_sw_deliver_chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.o_sw_deliver_picker {
+    position: relative;
+
+    .o_sw_deliver_options {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 40;
+        max-height: 220px;
+        overflow-y: auto;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+        border-radius: 6px;
+    }
+}

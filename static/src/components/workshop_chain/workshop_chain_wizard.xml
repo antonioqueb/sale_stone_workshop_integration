@@ -108,13 +108,49 @@
                 <span t-if="row.receive" t-out="row.receive.name"/>
                 <span t-else="" class="o_sw_missing_text">Sin definir</span>
             </td>
-            <td t-att-class="row.canEditDeliver ? 'o_sw_cell_editable' : ''"
-                t-att-title="row.canEditDeliver ? 'Clic para definir la entrega de este paso' : undefined"
-                t-on-click.stop="() => row.canEditDeliver ? props.onEdit(row.key) : props.onSelect(row.key)">
-                <span t-if="row.deliver" t-out="row.deliver.name"/>
-                <span t-else="" class="o_sw_missing_text">Sin definir</span>
-                <span t-if="row.isLast" class="badge text-bg-success ms-1">Vendido</span>
-                <i t-if="row.canEditDeliver" class="fa fa-pencil ms-2 o_sw_cell_edit_icon" role="img" aria-label="definir entrega"/>
+            <td class="o_sw_cell_deliver" t-on-click.stop="">
+                <!-- Último paso: entrega el producto vendido (implícito) -->
+                <t t-if="row.isLast">
+                    <span t-if="row.deliver" t-out="row.deliver.name"/>
+                    <span t-else="" class="o_sw_missing_text">Sin definir</span>
+                    <span class="badge text-bg-success ms-1">Vendido</span>
+                </t>
+                <!-- Entrega bloqueada por la OT del paso siguiente -->
+                <t t-elif="!row.canEditDeliver">
+                    <span t-att-title="row.deliverLockReason">
+                        <i class="fa fa-lock me-1" role="img" aria-label="bloqueada"/>
+                        <t t-if="row.deliver"><t t-out="row.deliver.name"/></t>
+                        <span t-else="" class="o_sw_missing_text">Sin definir</span>
+                    </span>
+                </t>
+                <!-- Editable: chip con el producto o buscador INLINE (sin panel) -->
+                <t t-else="">
+                    <div t-if="row.deliver" class="o_sw_deliver_chip">
+                        <span t-out="row.deliver.name"/>
+                        <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1"
+                                t-on-click.stop="clearDeliver" title="Quitar producto">
+                            <i class="fa fa-times" role="img" aria-label="quitar"/>
+                        </button>
+                    </div>
+                    <div t-else="" class="o_sw_deliver_picker">
+                        <input type="text"
+                               class="form-control form-control-sm"
+                               placeholder="Buscar producto…"
+                               t-att-value="state.term"
+                               t-on-click.stop=""
+                               t-on-input="onDeliverTermInput"
+                               t-on-focus="onDeliverFocus"/>
+                        <div t-if="state.options.length" class="o_sw_deliver_options list-group">
+                            <t t-foreach="state.options" t-as="option" t-key="option.id">
+                                <button type="button"
+                                        class="list-group-item list-group-item-action py-1"
+                                        t-on-click.stop="() => this.pickDeliver(option)"
+                                        t-out="option.name"/>
+                            </t>
+                        </div>
+                        <div t-elif="state.searching" class="text-muted small mt-1">Buscando…</div>
+                    </div>
+                </t>
             </td>
             <td>
                 <span t-if="row.ot" t-out="row.ot.name"/>
@@ -171,7 +207,9 @@
                                               onEdit="props.onEdit"
                                               onDelete="props.onDelete"
                                               onDragStart="props.onDragStart"
-                                              onDrop="props.onDrop"/>
+                                              onDrop="props.onDrop"
+                                              searchProducts="props.searchProducts"
+                                              onChangeDeliver="props.onChangeDeliver"/>
                     </t>
                 </tbody>
             </table>
@@ -330,7 +368,9 @@
                                              onDelete.bind="deleteStep"
                                              onAdd.bind="addStep"
                                              onDragStart.bind="onRowDragStart"
-                                             onDrop.bind="onRowDrop"/>
+                                             onDrop.bind="onRowDrop"
+                                             searchProducts.bind="searchProducts"
+                                             onChangeDeliver.bind="changeDeliver"/>
                 </div>
 
                 <WorkshopChainStepEditor t-if="editorRow"

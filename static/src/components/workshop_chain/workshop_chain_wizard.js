@@ -143,6 +143,17 @@ export class WorkshopChainStepRow extends Component {
     static template = "sale_stone_workshop_integration.WorkshopChainStepRow";
     static props = { "*": true };
 
+    setup() {
+        // Picker inline de la "Entrega": el producto se escoge en la misma
+        // fila, sin abrir el panel lateral (ahorra dos clics por paso).
+        this.state = useState({
+            term: "",
+            options: [],
+            searching: false,
+        });
+        this._searchTimeout = null;
+    }
+
     get row() {
         return this.props.row;
     }
@@ -153,6 +164,40 @@ export class WorkshopChainStepRow extends Component {
 
     get rowIssueText() {
         return this.row.issues.map((i) => i.message).join("\n");
+    }
+
+    onDeliverFocus() {
+        if (!this.state.options.length && !this.state.searching) {
+            this.searchDeliver(this.state.term || "");
+        }
+    }
+
+    onDeliverTermInput(ev) {
+        this.state.term = ev.target.value;
+        clearTimeout(this._searchTimeout);
+        this._searchTimeout = setTimeout(() => this.searchDeliver(this.state.term), 350);
+    }
+
+    async searchDeliver(term) {
+        this.state.searching = true;
+        try {
+            const results = await this.props.searchProducts(term);
+            this.state.options = results.map(([id, name]) => ({ id, name }));
+        } catch {
+            this.state.options = [];
+        } finally {
+            this.state.searching = false;
+        }
+    }
+
+    pickDeliver(option) {
+        this.props.onChangeDeliver(this.row.key, { id: option.id, name: option.name });
+        this.state.term = "";
+        this.state.options = [];
+    }
+
+    clearDeliver() {
+        this.props.onChangeDeliver(this.row.key, null);
     }
 
     onDragStart(ev) {
@@ -351,6 +396,70 @@ export class WorkshopChainWizard extends Component {
             lockReason: raw.lock_reason || "",
         }));
         this.state.loading = false;
+        // Entregas pendientes que el catálogo de recetas pueda resolver.
+        await this.autoFillChainFrom(0);
+    }
+
+    /* ------------------------------------------------------------------
+     * Recetas de proceso (origen + proceso → final)
+     * ------------------------------------------------------------------ */
+
+    async resolveRecipe(inputProductId, processId) {
+        if (!inputProductId || !processId) {
+            return null;
+        }
+        try {
+            const result = await this.orm.call(
+                "sale.order.line",
+                "resolve_workshop_chain_recipe",
+                [],
+                { input_product_id: inputProductId, process_id: processId }
+            );
+            return result || null;
+        } catch {
+            return null;
+        }
+    }
+
+    // Autollenar la "Entrega" del paso `index` con la receta (si existe y el
+    // paso siguiente no está bloqueado). No pisa entregas ya definidas.
+    async autoFillDeliver(index) {
+        const steps = this.state.steps;
+        const step = steps[index];
+        if (!step || index >= steps.length - 1 || step.deliver) {
+            return;
+        }
+        const nextStep = steps[index + 1];
+        if (nextStep && nextStep.locked) {
+            return;
+        }
+        const receive = this.receiveOf(index);
+        if (!receive || !step.process) {
+            return;
+        }
+        const product = await this.resolveRecipe(receive.id, step.process.id);
+        if (product && !step.deliver) {
+            step.deliver = product;
+            this.state.dirty = true;
+        }
+    }
+
+    // Cascada: resolver una entrega define el "Recibe" del siguiente paso,
+    // que a su vez puede tener receta — se resuelve en cadena hasta donde
+    // el catálogo alcance.
+    async autoFillChainFrom(index) {
+        const steps = this.state.steps;
+        for (let i = Math.max(0, index); i < steps.length - 1; i++) {
+            if (steps[i].deliver) {
+                continue;
+            }
+            await this.autoFillDeliver(i);
+            if (!steps[i].deliver) {
+                // Sin receta ni captura: los pasos siguientes no tienen
+                // "Recibe" conocido, no hay nada más que resolver.
+                break;
+            }
+        }
     }
 
     /* ------------------------------------------------------------------
@@ -472,12 +581,13 @@ export class WorkshopChainWizard extends Component {
         this.state.editorKey = null;
     }
 
-    addStep() {
+    async addStep() {
         newStepCounter += 1;
         const key = `new_${newStepCounter}`;
         // El nuevo paso pasa a ser el ÚLTIMO: entrega el producto vendido.
         // El paso que antes era último ahora necesita definir su entrega
-        // (producto intermedio); la validación lo marcará hasta definirlo.
+        // (producto intermedio); si hay receta (origen + proceso → final)
+        // se resuelve sola y el usuario no tiene que capturarla.
         this.state.steps.push({
             key,
             plId: 0,
@@ -489,6 +599,10 @@ export class WorkshopChainWizard extends Component {
             lockReason: "",
         });
         this.state.dirty = true;
+        const prevIndex = this.state.steps.length - 2;
+        if (prevIndex >= 0) {
+            await this.autoFillChainFrom(prevIndex);
+        }
         this.openEditor(key);
     }
 
@@ -514,15 +628,19 @@ export class WorkshopChainWizard extends Component {
         }
     }
 
-    changeProcess(key, process) {
+    async changeProcess(key, process) {
         const step = this.state.steps.find((s) => s.key === key);
         if (step && !step.locked) {
             step.process = process;
             this.state.dirty = true;
+            // Con el proceso definido, la receta puede resolver la entrega
+            // de este paso (y en cascada las de los siguientes).
+            const index = this.state.steps.findIndex((s) => s.key === key);
+            await this.autoFillChainFrom(index);
         }
     }
 
-    changeDeliver(key, product) {
+    async changeDeliver(key, product) {
         const index = this.state.steps.findIndex((s) => s.key === key);
         if (index < 0 || index === this.state.steps.length - 1) {
             return;
@@ -533,6 +651,11 @@ export class WorkshopChainWizard extends Component {
         }
         this.state.steps[index].deliver = product;
         this.state.dirty = true;
+        if (product) {
+            // El "Recibe" del siguiente paso cambió: intentar resolver su
+            // entrega (y las siguientes) con el catálogo de recetas.
+            await this.autoFillChainFrom(index + 1);
+        }
     }
 
     onRowDragStart(key) {

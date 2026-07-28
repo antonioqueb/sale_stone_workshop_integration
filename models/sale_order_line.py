@@ -411,6 +411,21 @@ class SaleOrderLine(models.Model):
             'state_label': state_labels.get(workshop.state, workshop.state),
         }, locked, lock_reason
 
+    @api.model
+    def resolve_workshop_chain_recipe(self, input_product_id=None, process_id=None):
+        """Producto final según el catálogo de Recetas de Proceso.
+
+        El workspace de cadena lo usa para deducir la "Entrega" de un paso
+        (origen + proceso → final) sin preguntarle al usuario. Devuelve
+        {'id', 'name'} o False si no hay receta."""
+        if 'workshop.process.recipe' not in self.env:
+            return False
+        product = self.env['workshop.process.recipe'].resolve_output(
+            input_product_id, process_id)
+        if not product:
+            return False
+        return {'id': product.id, 'name': product.display_name}
+
     def get_workshop_chain_workspace_data(self):
         """Todo lo que el workspace OWL necesita, en una sola llamada."""
         self.ensure_one()
