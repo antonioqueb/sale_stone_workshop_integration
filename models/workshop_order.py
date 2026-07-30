@@ -861,6 +861,18 @@ class WorkshopOrder(models.Model):
 
         location = input_line.location_id or self.location_src_id
 
+        # Un traslado interno de carrito/escáner abierto es reserva DÉBIL:
+        # no debe restarle disponible a la OT. Se libera antes de calcular
+        # (helper de inventory_shopping_cart; hasattr por si no está
+        # instalado).
+        Picking = self.env['stock.picking']
+        if hasattr(Picking, '_release_cart_internal_reservations'):
+            Picking._release_cart_internal_reservations(
+                [input_line.lot_id.id],
+                reason='Liberado automáticamente: el lote lo requiere la '
+                       'orden de taller %s.' % (self.name or ''),
+            )
+
         # Limpia reservas obsoletas antes de calcular, porque reserved_quantity
         # puede venir inflado por pickings anteriores del mismo flujo.
         self._sale_workshop_cleanup_stale_reservations(input_lines=input_line)

@@ -217,6 +217,22 @@ class SaleStoneWorkshopInputSelection(models.Model):
                 reserved = quant.reserved_quantity if 'reserved_quantity' in quant._fields else 0.0
                 qty += (quant.quantity or 0.0) - (reserved or 0.0)
 
+            # Reserva DÉBIL: lo retenido por traslados internos de
+            # carrito/escáner ABIERTOS sigue contando como disponible
+            # (se libera solo cuando la venta/taller toma el lote).
+            weak_domain = [
+                ('product_id', '=', line.base_product_id.id),
+                ('lot_id', '=', line.lot_id.id),
+                ('state', 'in', ('assigned', 'partially_available')),
+                ('picking_id.picking_type_code', '=', 'internal'),
+                ('picking_id.origin', '=like', 'Carrito - %'),
+                ('picking_id.state', 'not in', ('done', 'cancel')),
+            ]
+            if line.location_id:
+                weak_domain.append(('location_id', 'child_of', line.location_id.id))
+            weak_lines = self.env['stock.move.line'].sudo().search(weak_domain)
+            qty += sum(weak_lines.mapped('quantity'))
+
             # Si esta misma selección ya creó una reserva, se considera disponible
             # para que la validación no se bloquee contra su propio compromiso.
             if line.workshop_order_id and line.workshop_input_line_id:

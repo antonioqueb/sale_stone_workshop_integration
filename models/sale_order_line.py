@@ -1006,6 +1006,21 @@ class SaleOrderLine(models.Model):
             reserved = quant.reserved_quantity if 'reserved_quantity' in quant._fields else 0.0
             qty += (quant.quantity or 0.0) - (reserved or 0.0)
 
+        # Reserva DÉBIL: lo retenido por traslados internos de carrito/escáner
+        # ABIERTOS sigue disponible (se libera solo); sin este ajuste la línea
+        # podía decidir "mandar a pedir" material que sí está en piso.
+        weak_domain = [
+            ('product_id', '=', self.product_id.id),
+            ('state', 'in', ('assigned', 'partially_available')),
+            ('picking_id.picking_type_code', '=', 'internal'),
+            ('picking_id.origin', '=like', 'Carrito - %'),
+            ('picking_id.state', 'not in', ('done', 'cancel')),
+        ]
+        if warehouse and warehouse.lot_stock_id:
+            weak_domain.append(('location_id', 'child_of', warehouse.lot_stock_id.id))
+        weak_lines = self.env['stock.move.line'].sudo().search(weak_domain)
+        qty += sum(weak_lines.mapped('quantity'))
+
         return max(qty, 0.0)
 
     def _stone_workshop_get_line_uom(self):
@@ -1593,6 +1608,24 @@ class SaleOrderLine(models.Model):
         quants = Quant.search(domain, order='lot_id, location_id')
         lot_map = {}
 
+        # Reserva DÉBIL por lote: cantidad retenida en traslados internos de
+        # carrito/escáner ABIERTOS. Se suma de vuelta al libre para que la
+        # placa no desaparezca del selector solo por estarse reacomodando.
+        weak_qty_by_lot = {}
+        weak_lines = self.env['stock.move.line'].sudo().search([
+            ('product_id', '=', base_product.id),
+            ('lot_id', '!=', False),
+            ('state', 'in', ('assigned', 'partially_available')),
+            ('picking_id.picking_type_code', '=', 'internal'),
+            ('picking_id.origin', '=like', 'Carrito - %'),
+            ('picking_id.state', 'not in', ('done', 'cancel')),
+        ])
+        for weak_line in weak_lines:
+            weak_qty_by_lot[weak_line.lot_id.id] = (
+                weak_qty_by_lot.get(weak_line.lot_id.id, 0.0)
+                + (weak_line.quantity or 0.0)
+            )
+
         for quant in quants:
             lot = quant.lot_id
 
@@ -1604,6 +1637,8 @@ class SaleOrderLine(models.Model):
 
             reserved_qty = quant.reserved_quantity if 'reserved_quantity' in quant._fields else 0.0
             free_qty = (quant.quantity or 0.0) - (reserved_qty or 0.0)
+            if free_qty <= 0 and weak_qty_by_lot.get(lot.id):
+                free_qty += weak_qty_by_lot[lot.id]
 
             own_reserved_qty = 0.0
             if lot.id in allowed_current_lot_ids:
