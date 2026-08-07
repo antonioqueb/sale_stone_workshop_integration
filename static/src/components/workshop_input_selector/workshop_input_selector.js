@@ -193,6 +193,7 @@ export class SaleWorkshopInputSelector extends Component {
             pendingIds: new Set(data.selected_lot_ids || []),
             pendingBreakdown: { ...(data.breakdown || {}) },
             filters: {
+                product_name: "",
                 lot_name: "",
                 bloque: "",
                 atado: "",
@@ -215,6 +216,8 @@ export class SaleWorkshopInputSelector extends Component {
                                 Producto base: <strong>${this._escapeHtml(data.base_product_name || "")}</strong>
                                 <span class="swis-sep">•</span>
                                 Producto final: <strong>${this._escapeHtml(data.product_final_name || "")}</strong>
+                                <span class="swis-sep">•</span>
+                                Puedes combinar materiales distintos: busca por nombre en el filtro Material.
                             </div>
                         </div>
 
@@ -245,6 +248,11 @@ export class SaleWorkshopInputSelector extends Component {
                     </div>
 
                     <div class="swis-filters">
+                        <div class="swis-filter">
+                            <label>Material</label>
+                            <input id="swis-f-product" type="text" placeholder="Cualquier material (vacío = producto base)"/>
+                        </div>
+
                         <div class="swis-filter">
                             <label>Lote</label>
                             <input id="swis-f-lot" type="text" placeholder="Buscar lote..."/>
@@ -387,7 +395,7 @@ export class SaleWorkshopInputSelector extends Component {
                 body.innerHTML = `
                     <div class="swis-empty">
                         <i class="fa fa-inbox fa-2x"></i>
-                        <div>No hay placas disponibles para este producto base.</div>
+                        <div>Sin resultados. Usa el filtro Material para buscar lotes de otros productos/acabados.</div>
                     </div>`;
                 stat.textContent = "0 lotes";
                 footer.textContent = "Sin resultados disponibles.";
@@ -411,6 +419,8 @@ export class SaleWorkshopInputSelector extends Component {
                 const qtyAvailable = parseFloat(q.quantity || 0);
                 const qtyValue = parseFloat(st.pendingBreakdown[String(lotId)] || qtyAvailable || 0);
                 const loc = q.location_id ? q.location_id[1] : "";
+                const productName = q.product_id ? q.product_id[1] : "";
+                const isBase = q.is_base_product !== false;
 
                 rows += `
                     <tr class="${selected ? "swis-row-selected" : ""}" data-lot-id="${lotId}">
@@ -418,6 +428,10 @@ export class SaleWorkshopInputSelector extends Component {
                             <input type="checkbox" ${selected ? "checked" : ""}/>
                         </td>
                         <td class="swis-lot">${this._escapeHtml(lotName)}</td>
+                        <td class="swis-product${isBase ? "" : " swis-product-alt"}"
+                            title="${this._escapeHtml(productName)}">
+                            ${this._escapeHtml(productName || "-")}
+                        </td>
                         <td>${this._escapeHtml(q.x_bloque || "-")}</td>
                         <td>${this._escapeHtml(q.x_atado || "-")}</td>
                         <td class="text-end">${q.x_alto ? this.fmt(q.x_alto) : "-"}</td>
@@ -445,6 +459,7 @@ export class SaleWorkshopInputSelector extends Component {
                         <tr>
                             <th></th>
                             <th>Lote</th>
+                            <th>Material</th>
                             <th>Bloque</th>
                             <th>Atado</th>
                             <th class="text-end">Alto</th>
@@ -641,6 +656,7 @@ export class SaleWorkshopInputSelector extends Component {
             });
         };
 
+        bindFilter("#swis-f-product", "product_name");
         bindFilter("#swis-f-lot", "lot_name");
         bindFilter("#swis-f-bloque", "bloque");
         bindFilter("#swis-f-atado", "atado");

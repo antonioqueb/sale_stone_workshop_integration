@@ -1188,6 +1188,10 @@ class SaleOrderLine(models.Model):
         return result
 
     def _stone_workshop_prepare_selection_vals_from_lots(self, lot_ids, breakdown=None):
+        """MUCHOS → UNO: los lotes elegidos pueden ser de productos DISTINTOS
+        (otros acabados). Se agrupan por SU producto real y cada selección
+        conserva ese producto como base a consumir; el producto base de la
+        línea solo es el default/preferente, no una restricción."""
         self.ensure_one()
 
         safe_lot_ids = self._stone_workshop_safe_int_list(lot_ids)
@@ -1198,11 +1202,19 @@ class SaleOrderLine(models.Model):
         warehouse = self.order_id.warehouse_id
         location_id = warehouse.lot_stock_id.id if warehouse and warehouse.lot_stock_id else False
 
-        vals_list = self.env['workshop.order'].prepare_input_line_vals_from_lots(
-            self.stone_workshop_base_product_id.id,
-            safe_lot_ids,
-            location_id=location_id,
-        )
+        lots = self.env['stock.lot'].browse(safe_lot_ids).exists()
+        lot_product_map = {lot.id: lot.product_id for lot in lots if lot.product_id}
+
+        vals_list = []
+        for product in lots.mapped('product_id'):
+            product_lot_ids = [
+                lot.id for lot in lots if lot.product_id == product
+            ]
+            vals_list += self.env['workshop.order'].prepare_input_line_vals_from_lots(
+                product.id,
+                product_lot_ids,
+                location_id=location_id,
+            )
 
         for vals in vals_list:
             lot_id = vals.get('lot_id')
@@ -1221,11 +1233,15 @@ class SaleOrderLine(models.Model):
                 vals['qty_in'] = manual_qty
                 vals['area_sqm'] = manual_qty
 
+            lot_product = lot_product_map.get(lot_id)
             vals.update({
                 'sale_order_id': self.order_id.id,
                 'sale_line_id': self.id,
                 'product_final_id': self.product_id.id,
-                'base_product_id': self.stone_workshop_base_product_id.id,
+                'base_product_id': (
+                    lot_product.id if lot_product
+                    else self.stone_workshop_base_product_id.id
+                ),
                 'reserved_origin': '%s / %s' % (
                     self.order_id.name or '',
                     self.product_id.display_name or '',
@@ -1251,11 +1267,20 @@ class SaleOrderLine(models.Model):
                 ).mapped('lot_id').ids
             )
 
-        committed_lot_ids = set(
-            self.env['stock.quant']._get_committed_lot_ids(
-                self.stone_workshop_base_product_id.id
-            )
+        # MUCHOS → UNO: los lotes elegidos pueden ser de varios productos;
+        # el compromiso se valida contra CADA producto involucrado.
+        target_lots = self.env['stock.lot'].browse(list(target_lot_ids)).exists()
+        involved_products = (
+            target_lots.mapped('product_id')
+            | self.stone_workshop_base_product_id
         )
+        committed_lot_ids = set()
+        for involved_product in involved_products:
+            committed_lot_ids |= set(
+                self.env['stock.quant']._get_committed_lot_ids(
+                    involved_product.id
+                )
+            )
 
         conflict_ids = target_lot_ids & (committed_lot_ids - current_lot_ids)
 
@@ -1551,12 +1576,24 @@ class SaleOrderLine(models.Model):
         warehouse = self.order_id.warehouse_id if self.order_id else False
         warehouse_location = warehouse.lot_stock_id if warehouse and warehouse.lot_stock_id else False
 
+        # MUCHOS → UNO: el taller puede consumir materiales DISTINTOS al
+        # producto base (mismos mármoles en otros acabados, retazos, etc.).
+        # Con el filtro de producto se busca en TODO el inventario rastreable;
+        # sin él se mantiene el comportamiento histórico (solo producto base).
+        product_name = (filters.get('product_name') or '').strip()
+
         domain = [
-            ('product_id', '=', base_product.id),
             ('lot_id', '!=', False),
             ('location_id.usage', '=', 'internal'),
             ('quantity', '>', 0),
         ]
+        if product_name:
+            domain += [
+                ('product_id', 'ilike', product_name),
+                ('product_id.tracking', '!=', 'none'),
+            ]
+        else:
+            domain.append(('product_id', '=', base_product.id))
 
         if warehouse_location:
             domain.append(('location_id', 'child_of', warehouse_location.id))
@@ -1586,7 +1623,18 @@ class SaleOrderLine(models.Model):
 
         allowed_current_lot_ids = current_lot_ids | current_selection_lot_ids | current_workshop_lot_ids
 
-        committed_lot_ids = set(Quant._get_committed_lot_ids(base_product.id))
+        quants = Quant.search(domain, order='lot_id, location_id')
+        lot_map = {}
+
+        # Productos realmente involucrados en el resultado (varios si el
+        # vendedor buscó por nombre): los bloqueos por compromiso, taller y
+        # reserva débil se calculan por CADA producto, no solo el base.
+        involved_products = quants.mapped('product_id') | base_product
+
+        committed_lot_ids = set()
+        for involved_product in involved_products:
+            committed_lot_ids |= set(
+                Quant._get_committed_lot_ids(involved_product.id))
 
         # Placas que siguen físicamente en una ubicación interna (in stock) pero
         # ya están vinculadas a una OT de taller en proceso ("en producción / en
@@ -1596,7 +1644,7 @@ class SaleOrderLine(models.Model):
         # autocontenida para no depender de ese módulo.
         if 'workshop.input.line' in self.env:
             workshop_blocked_lines = self.env['workshop.input.line'].sudo().search([
-                ('product_id', '=', base_product.id),
+                ('product_id', 'in', involved_products.ids),
                 ('lot_id', '!=', False),
                 ('state', 'not in', ('cancelled', 'done', 'rejected')),
                 ('order_id.state', '=', 'in_workshop'),
@@ -1605,15 +1653,12 @@ class SaleOrderLine(models.Model):
 
         committed_lot_ids -= allowed_current_lot_ids
 
-        quants = Quant.search(domain, order='lot_id, location_id')
-        lot_map = {}
-
         # Reserva DÉBIL por lote: cantidad retenida en traslados internos de
         # carrito/escáner ABIERTOS. Se suma de vuelta al libre para que la
         # placa no desaparezca del selector solo por estarse reacomodando.
         weak_qty_by_lot = {}
         weak_lines = self.env['stock.move.line'].sudo().search([
-            ('product_id', '=', base_product.id),
+            ('product_id', 'in', involved_products.ids),
             ('lot_id', '!=', False),
             ('state', 'in', ('assigned', 'partially_available')),
             ('picking_id.picking_type_code', '=', 'internal'),
@@ -1643,7 +1688,7 @@ class SaleOrderLine(models.Model):
             own_reserved_qty = 0.0
             if lot.id in allowed_current_lot_ids:
                 own_reserved_qty = self._swis_own_reserved_qty_for_lot(
-                    base_product,
+                    quant.product_id,
                     lot,
                     location=quant.location_id,
                 )
@@ -1675,6 +1720,11 @@ class SaleOrderLine(models.Model):
                 lot_map[lot.id] = {
                     'id': quant.id,
                     'lot_id': [lot.id, lot.name or lot.display_name],
+                    'product_id': [
+                        quant.product_id.id,
+                        quant.product_id.display_name or '',
+                    ],
+                    'is_base_product': quant.product_id == base_product,
                     'location_id': [
                         quant.location_id.id,
                         quant.location_id.display_name or quant.location_id.name or '',
