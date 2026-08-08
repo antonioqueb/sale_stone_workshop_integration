@@ -19,19 +19,27 @@
                 </button>
             </xpath>
 
-            <!-- "Taller" vive en las LÍNEAS DE LA ORDEN, a la derecha del
-                 interruptor "Asignar" de stock_transit_allocation (dependencia
-                 declarada en el manifest). Al activarlo, la cantidad
-                 solicitada se edita libremente sin el tope de stock: el
-                 producto final se fabrica en taller (equivale a "Pedir" pero
-                 hacia taller). -->
+            <!-- COLUMNA ÚNICA "Modos": los tres interruptores (Pedir /
+                 Asignar / Taller) apilados en vertical en una sola columna.
+                 El widget se ancla a auto_transit_assign y escribe también
+                 por_asignar y stone_workshop_required (fieldDependencies);
+                 las columnas individuales se ocultan pero siguen en la vista
+                 para que sus valores viajen con el registro. -->
+            <xpath expr="//field[@name='order_line']/list/field[@name='auto_transit_assign']"
+                   position="attributes">
+                <attribute name="widget">som_sale_mode_column</attribute>
+                <attribute name="string">Modos</attribute>
+                <attribute name="width">92px</attribute>
+            </xpath>
+
+            <xpath expr="//field[@name='order_line']/list/field[@name='por_asignar']"
+                   position="attributes">
+                <attribute name="column_invisible">1</attribute>
+            </xpath>
+
             <xpath expr="//field[@name='order_line']/list/field[@name='por_asignar']"
                    position="after">
-                <field name="stone_workshop_required"
-                       string="Taller"
-                       widget="boolean_toggle"
-                       width="72px"
-                       optional="show"/>
+                <field name="stone_workshop_required" column_invisible="1"/>
             </xpath>
 
             <!-- Desbloquear 'Solicitado' también en modo Taller: la regla de

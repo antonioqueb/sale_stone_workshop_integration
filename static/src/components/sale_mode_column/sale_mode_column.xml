@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+<t t-name="sale_stone_workshop_integration.SomSaleModeColumn" owl="1">
+    <div class="som-mode-col">
+        <t t-foreach="modes" t-as="m" t-key="m.field">
+            <label t-attf-class="som-mode-item #{isOn(m.field) ? 'som-mode-item--on' : ''} #{isDisabled(m.field) ? 'som-mode-item--disabled' : ''}">
+                <input type="checkbox"
+                       t-att-checked="isOn(m.field)"
+                       t-att-disabled="isDisabled(m.field)"
+                       t-on-click="(ev) => this.toggle(m.field, ev)"/>
+                <span t-esc="m.label"/>
+            </label>
+        </t>
+    </div>
+</t>
+
+</templates>
