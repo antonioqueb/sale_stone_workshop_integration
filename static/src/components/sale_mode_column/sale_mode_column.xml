@@ -3,7 +3,7 @@
 
 <t t-name="sale_stone_workshop_integration.SomSaleModeColumn" owl="1">
     <div class="som-mode-col">
-        <t t-foreach="modes" t-as="m" t-key="m.field">
+        <t t-foreach="visibleModes" t-as="m" t-key="m.field">
             <label t-attf-class="som-mode-item #{isOn(m.field) ? 'som-mode-item--on' : ''} #{isDisabled(m.field) ? 'som-mode-item--disabled' : ''}">
                 <input type="checkbox"
                        t-att-checked="isOn(m.field)"

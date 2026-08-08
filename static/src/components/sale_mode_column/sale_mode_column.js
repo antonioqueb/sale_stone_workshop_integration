@@ -24,16 +24,28 @@ export class SomSaleModeColumn extends Component {
         return MODES;
     }
 
+    // Reglas por tipo de línea:
+    // - SERVICIOS: ningún modo (la celda queda vacía).
+    // - Pedir/Asignar: todo lo demás (placas, formatos, piezas, adhesivos).
+    // - Taller: SOLO placas y formatos (stone_workshop_kind_allowed).
+    get visibleModes() {
+        const data = this.props.record.data;
+        if (data.tc_is_service_line) {
+            return [];
+        }
+        return MODES.filter((m) => {
+            if (m.field === "stone_workshop_required") {
+                return Boolean(data.stone_workshop_kind_allowed);
+            }
+            return true;
+        });
+    }
+
     isOn(fname) {
         return !!this.props.record.data[fname];
     }
 
     isDisabled(fname) {
-        // Pedir/Asignar heredan el readonly del campo ancla (líneas de
-        // servicio); Taller nunca tuvo restricción en la vista original.
-        if (fname === "stone_workshop_required") {
-            return false;
-        }
         return !!this.props.readonly;
     }
 
@@ -56,5 +68,7 @@ registry.category("fields").add("som_sale_mode_column", {
     fieldDependencies: [
         { name: "por_asignar", type: "boolean" },
         { name: "stone_workshop_required", type: "boolean" },
+        { name: "tc_is_service_line", type: "boolean" },
+        { name: "stone_workshop_kind_allowed", type: "boolean" },
     ],
 });

@@ -33,6 +33,27 @@ class SaleOrderLine(models.Model):
         default=True,
         copy=True,
     )
+    stone_workshop_kind_allowed = fields.Boolean(
+        string='Admite Taller',
+        compute='_compute_stone_workshop_kind_allowed',
+        help='True solo para PLACAS y FORMATOS (por categoría del producto): '
+             'el modo Taller no aplica a servicios, adhesivos ni piezas. '
+             'Gobierna la visibilidad del check Taller en la columna Modos.',
+    )
+
+    @api.depends('product_id', 'product_id.categ_id')
+    def _compute_stone_workshop_kind_allowed(self):
+        # Misma convención de clasificación que el reporte de detalle:
+        # la categoría (complete_name) contiene 'Placas' o 'Formatos'.
+        for line in self:
+            product = line.product_id
+            if not product or product.type == 'service':
+                line.stone_workshop_kind_allowed = False
+                continue
+            categ = product.categ_id.complete_name or ''
+            line.stone_workshop_kind_allowed = (
+                'Placas' in categ or 'Formatos' in categ
+            )
     stone_workshop_base_product_id = fields.Many2one(
         'product.product',
         string='Producto base',
