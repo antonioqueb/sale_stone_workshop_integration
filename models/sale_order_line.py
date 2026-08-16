@@ -837,7 +837,8 @@ class SaleOrderLine(models.Model):
     def _stone_workshop_sync_existing_order(self):
         """Mantiene la OT en borrador alineada con la línea de venta."""
         self.ensure_one()
-        workshop_order = self.stone_workshop_order_id
+        # .sudo(): sincronizar la OT desde la venta es plomería.
+        workshop_order = self.stone_workshop_order_id.sudo()
 
         if not workshop_order or workshop_order.state != 'draft':
             return
@@ -909,7 +910,7 @@ class SaleOrderLine(models.Model):
             if line.display_type or line.stone_is_workshop_service_line:
                 continue
 
-            first = line.stone_workshop_order_id
+            first = line.stone_workshop_order_id.sudo()
             if not first or first.state == 'cancel':
                 # La cadena nace con la primera OT (al confirmar o con el
                 # botón manual); sin ella no hay nada que sincronizar.
@@ -920,7 +921,7 @@ class SaleOrderLine(models.Model):
 
             for step in steps[1:]:
                 process_line = step['process_line']
-                workshop = process_line.workshop_order_id
+                workshop = process_line.workshop_order_id.sudo()
 
                 if not workshop or workshop.state == 'cancel':
                     vals = order._stone_workshop_get_workshop_vals(
@@ -1444,6 +1445,12 @@ class SaleOrderLine(models.Model):
         if not workshop:
             return False
 
+        # sudo AQUÍ y no en cada llamador: empujar las placas reescribe la
+        # OT (línea de entrada, y de rebote la reserva exacta, que hace
+        # workshop.write). El vendedor elige las placas — escribir la OT es
+        # plomería. Si el llamador ya venía en sudo, esto es un no-op.
+        workshop = workshop.sudo()
+
         active_selections = self._stone_workshop_active_input_selections()
         if not active_selections:
             return False
@@ -1462,7 +1469,11 @@ class SaleOrderLine(models.Model):
 
         for selection in active_selections:
             vals = selection._to_workshop_input_vals(workshop)
-            input_line = selection.workshop_input_line_id
+            # .sudo(): viene por el m2o de la selección, o sea sin elevar.
+            # Reescribir una línea de entrada existente tronaba en la
+            # SEGUNDA edición de placas, cuando la primera ya había creado
+            # la línea.
+            input_line = selection.workshop_input_line_id.sudo()
 
             if input_line and input_line.exists():
                 if input_line.is_consumed:
