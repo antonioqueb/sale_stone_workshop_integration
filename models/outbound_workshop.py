@@ -29,7 +29,11 @@ _logger = logging.getLogger(__name__)
 _PENDIENTE = ('draft', 'waiting', 'confirmed', 'assigned')
 
 
-class SaleDeliveryLiveMap(models.Model):
+class SaleDeliveryLiveMap(models.TransientModel):
+    # TransientModel, NO Model: el tablero de sale_delivery_wizard es
+    # transitorio (solo expone métodos, no guarda filas). Heredarlo como
+    # models.Model lo convierte en persistente y Odoo se niega a cargar el
+    # registro entero — la base no arranca.
     _inherit = 'sale.delivery.live.map'
 
     @api.model
