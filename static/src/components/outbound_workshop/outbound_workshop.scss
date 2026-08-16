@@ -1,0 +1,22 @@
+// Columna "A taller" — hereda todo del tablero de Salidas; aquí solo lo
+// que la distingue: es material que se queda en casa, no sale a la calle.
+.o_out_card.o_sw_card {
+    border-left: 3px solid #6b7280;
+
+    &.o_sw_late {
+        border-left-color: #b45309;
+    }
+
+    .o_sw_days {
+        font-weight: 600;
+
+        &.warn {
+            color: #b45309;
+        }
+    }
+
+    .o_out_btn[disabled] {
+        opacity: .5;
+        cursor: not-allowed;
+    }
+}

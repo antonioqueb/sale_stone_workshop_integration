@@ -472,7 +472,70 @@ class SaleOrder(models.Model):
                     line.id,
                 )
 
+        if created_orders:
+            self._stone_workshop_notify_logistics(created_orders)
+
         return created_orders
+
+    def _stone_workshop_notify_logistics(self, workshops):
+        """Avisa a Logística que hay material que llevar a taller.
+
+        El vendedor crea la OT y ahí termina su parte: no entra a taller ni
+        puede mover material. La primera acción real es de Logística —
+        entregar las placas al taller. Sin este aviso nadie se enteraba y la
+        OT se quedaba esperando en borrador.
+
+        Reusa el MISMO canal que ya avisa cuando se confirma un pago o se
+        autoriza una entrega a mano (sale_delivery_auth › grupo
+        'Logística — Avisos'), para que a Tere y a Tani les llegue por donde
+        ya están acostumbradas a mirar. Si ese módulo no está instalado, no
+        pasa nada: el flujo sigue.
+        """
+        for order in self:
+            propias = workshops.filtered(lambda w: w.sale_order_id == order)
+            if not propias:
+                continue
+            if not hasattr(order, '_som_schedule_logistics_activity'):
+                _logger.info(
+                    '[STONE WORKSHOP SALE] Sin sale_delivery_auth: no se avisa '
+                    'a Logística por %s.', order.name)
+                continue
+
+            pendientes = propias.filtered(
+                lambda w: w.sale_workshop_reservation_picking_id
+                and w.sale_workshop_reservation_picking_id.state not in (
+                    'done', 'cancel'))
+            if not pendientes:
+                # Sin traslado que entregar (OT sin placas base asignadas):
+                # no hay nada que pedirle a Logística.
+                continue
+
+            traslados = ', '.join(
+                pendientes.mapped(
+                    'sale_workshop_reservation_picking_id.name'))
+            nota = _(
+                '<p><b>🪨 Material para taller — hay que entregarlo.</b></p>'
+                '<p>La venta %(orden)s generó %(n)s orden(es) de taller: '
+                '%(ots)s.</p>'
+                '<p><b>Qué hay que hacer:</b> entregar el material al taller '
+                'desde <b>Entregas › Salidas</b>, columna <b>"A taller"</b>. '
+                'Las placas ya están reservadas en el traslado %(pick)s.</p>'
+                '<p>El taller NO puede arrancar la orden hasta que esa '
+                'entrega esté hecha.</p>'
+            ) % {
+                'orden': order.name or '',
+                'n': len(pendientes),
+                'ots': ', '.join(pendientes.mapped('name')),
+                'pick': traslados,
+            }
+            order._som_schedule_logistics_activity(
+                _('Entregar material a taller: %s') % (order.name or ''),
+                nota,
+            )
+            _logger.info(
+                '[STONE WORKSHOP SALE] Logística avisada para %s (OTs %s, '
+                'traslados %s).',
+                order.name, pendientes.mapped('name'), traslados)
 
     def _stone_workshop_create_chain_for_line(self, line):
         """Crea la cadena de órdenes de taller para una línea de venta.

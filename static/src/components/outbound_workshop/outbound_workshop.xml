@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <!-- Tarjeta propia: el traslado a taller no tiene cliente, ni camión,
+         ni firma. Reusar OutboundCard obligaría a rellenar campos que no
+         existen y a pintar "Sin camión asignado" en algo que nunca sale a
+         la calle. -->
+    <t t-name="sale_stone_workshop_integration.WorkshopDeliveryCard">
+        <div t-attf-class="o_out_card o_sw_card {{ card.late ? 'o_sw_late' : '' }}">
+            <div class="o_out_card_top">
+                <span class="o_out_card_name" t-esc="card.picking"/>
+                <span t-if="card.ready" class="o_out_badge green">Reservado</span>
+                <span t-else="" class="o_out_badge amber">Sin reservar</span>
+            </div>
+            <div class="o_out_card_sub">
+                <b t-esc="card.workshop"/><t t-if="card.process"> · <t t-esc="card.process"/></t>
+            </div>
+            <div class="o_out_card_stats">
+                <span><b t-esc="card.qty_label"/></span>
+                <span><b t-esc="card.lines"/> placas</span>
+                <span t-if="card.order" class="link" t-on-click.stop="() => this.openOrder(card.order_id)">
+                    <t t-esc="card.order"/>
+                </span>
+            </div>
+            <div class="o_out_mats" t-if="card.materials and card.materials.length">
+                <div class="m" t-foreach="card.materials.slice(0, 3)" t-as="mt" t-key="mt.product + mt.uom">
+                    <span t-att-title="mt.product" t-esc="mt.product"/>
+                    <b><t t-esc="mt.qty"/> <t t-esc="mt.uom"/></b>
+                </div>
+                <div class="more" t-if="card.materials.length > 3">
+                    +<t t-esc="card.materials.length - 3"/> materiales más
+                </div>
+            </div>
+            <div class="o_out_card_meta">
+                <span t-if="card.partner" t-esc="card.partner"/>
+                <span t-if="card.days" t-attf-class="o_sw_days {{ card.late ? 'warn' : '' }}">
+                    esperando <t t-esc="card.days"/> d
+                </span>
+            </div>
+            <div class="o_out_card_actions">
+                <button class="o_out_btn" t-att-disabled="!card.ready"
+                        t-on-click="() => this.deliverToWorkshop(card.id)">
+                    Entregar a taller
+                </button>
+                <button class="o_out_btn ghost"
+                        t-on-click="() => this.openWorkshopPicking(card.id)">
+                    Abrir
+                </button>
+            </div>
+        </div>
+    </t>
+
+    <!-- La columna se cuelga al final del flujo del día, después de
+         "Entregadas hoy". -->
+    <t t-name="sale_stone_workshop_integration.OutboundDashboardWorkshop"
+       t-inherit="sale_delivery_wizard.OutboundDashboard"
+       t-inherit-mode="extension">
+        <xpath expr="//div[hasclass('o_out_cols')]" position="inside">
+            <div class="o_out_col" t-if="state.data.to_workshop">
+                <div class="o_out_col_head slate">
+                    <span>A taller</span>
+                    <b t-esc="state.data.to_workshop.length"/>
+                </div>
+                <t t-foreach="state.data.to_workshop" t-as="card" t-key="card.id">
+                    <t t-call="sale_stone_workshop_integration.WorkshopDeliveryCard"/>
+                </t>
+                <div t-if="!state.data.to_workshop.length" class="o_out_empty">
+                    Nada pendiente de entregar a taller
+                </div>
+            </div>
+        </xpath>
+    </t>
+
+</templates>

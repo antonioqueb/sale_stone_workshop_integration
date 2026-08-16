@@ -17,6 +17,26 @@ ACTIVE_WORKSHOP_STATES = (
 class WorkshopOrder(models.Model):
     _inherit = 'workshop.order'
 
+    # ── CANDADO: taller no arranca sin el material ────────────────────
+    # El vendedor crea la OT desde su venta, pero el material sigue en el
+    # almacén: la OT solo deja un traslado interno RESERVADO. Si taller
+    # pudiera confirmar con el traslado sin validar, el sistema diría que
+    # el material está en taller cuando físicamente sigue en el rack —
+    # justo el desorden que este flujo viene a evitar. Logística entrega
+    # desde el Tablero de Salidas y eso libera el paso.
+
+    def action_confirm_workshop(self):
+        for rec in self:
+            picking = rec.sale_workshop_reservation_picking_id
+            if picking and picking.state not in ('done', 'cancel'):
+                raise UserError(_(
+                    'El material de %(ot)s todavía no se entrega a taller.\n\n'
+                    'Logística tiene que entregar el traslado %(pick)s '
+                    '(Entregas › Salidas › columna "A taller"). En cuanto lo '
+                    'entregue, esta orden se puede confirmar.'
+                ) % {'ot': rec.name or '', 'pick': picking.name or ''})
+        return super().action_confirm_workshop()
+
     sale_order_id = fields.Many2one(
         'sale.order',
         string='Orden de venta',
