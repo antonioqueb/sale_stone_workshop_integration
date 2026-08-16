@@ -762,7 +762,10 @@ class SaleOrderLine(models.Model):
         """
         real_lines = self.filtered(lambda l: not l.display_type)
         if real_lines:
-            workshops = self.env['workshop.order'].search([
+            # sudo: borrar la línea cancela sus OTs en borrador y libera
+            # las placas. Plomería disparada por el vendedor, no acción suya
+            # dentro de taller.
+            workshops = self.env['workshop.order'].sudo().search([
                 ('sale_line_id', 'in', real_lines.ids),
                 ('state', 'in', ('draft', 'in_workshop')),
             ])
@@ -894,7 +897,8 @@ class SaleOrderLine(models.Model):
         if self.env.context.get('skip_stone_workshop_chain_resync'):
             return False
 
-        WorkshopOrder = self.env['workshop.order']
+        # sudo: re-sincronizar la cadena reescribe OTs existentes.
+        WorkshopOrder = self.env['workshop.order'].sudo()
 
         for line in self:
             order = line.order_id
@@ -1231,7 +1235,7 @@ class SaleOrderLine(models.Model):
             product_lot_ids = [
                 lot.id for lot in lots if lot.product_id == product
             ]
-            vals_list += self.env['workshop.order'].prepare_input_line_vals_from_lots(
+            vals_list += self.env['workshop.order'].sudo().prepare_input_line_vals_from_lots(
                 product.id,
                 product_lot_ids,
                 location_id=location_id,
@@ -1404,7 +1408,9 @@ class SaleOrderLine(models.Model):
         for selection in to_cancel:
             input_line = selection.workshop_input_line_id
             if input_line and input_line.exists() and not input_line.is_consumed:
-                input_line.unlink()
+                # sudo: mismo caso que en action_cancel_selection — el
+                # unlink de workshop.input.line es exclusivo del supervisor.
+                input_line.sudo().unlink()
 
             selection.write({
                 'state': 'cancelled',
@@ -1449,7 +1455,9 @@ class SaleOrderLine(models.Model):
             if consumed:
                 return True
 
-        WorkshopInput = self.env['workshop.input.line']
+        # sudo: las líneas de entrada de la OT las escribe el sistema con
+        # las placas que el vendedor eligió en SU venta.
+        WorkshopInput = self.env['workshop.input.line'].sudo()
         created_or_updated = WorkshopInput
 
         for selection in active_selections:

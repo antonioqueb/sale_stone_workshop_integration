@@ -424,7 +424,11 @@ class SaleStoneWorkshopInputSelection(models.Model):
                 ) % selection.lot_id.name)
 
             if input_line and input_line.exists():
-                input_line.unlink()
+                # sudo: borrar la línea de entrada de la OT es plomería. El
+                # unlink de workshop.input.line solo lo tiene el SUPERVISOR
+                # de taller — sin esto, cancelar una selección de placa
+                # tronaba hasta para el propio usuario de taller.
+                input_line.sudo().unlink()
 
             selection.write({
                 'state': 'cancelled',

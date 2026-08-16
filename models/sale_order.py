@@ -198,7 +198,9 @@ class SaleOrder(models.Model):
 
     def _stone_workshop_release_on_cancel(self):
         for order in self:
-            draft_workshops = self.env['workshop.order'].search([
+            # sudo: cancelar la venta cancela sus OTs en borrador y libera
+            # las placas. Es plomería, no una acción de taller del vendedor.
+            draft_workshops = self.env['workshop.order'].sudo().search([
                 ('sale_order_id', '=', order.id),
                 ('state', '=', 'draft'),
             ])
@@ -362,8 +364,25 @@ class SaleOrder(models.Model):
     # Creación de órdenes de taller
     # -------------------------------------------------------------------------
 
+    # ── PLOMERÍA DE TALLER: va con sudo() ─────────────────────────────────
+    # El vendedor configura origen, proceso y producto destino en su venta;
+    # de ahí para adelante (crear la OT, encadenarla, empujar las placas,
+    # cancelarla si se cancela la venta) es plomería de OTRO departamento
+    # que se dispara desde SU acción.
+    #
+    # Sin sudo, esa plomería exigía group_workshop_user — que es justo el
+    # grupo que abre la app Taller de Piedra. O sea: para poder vender
+    # material con proceso había que darle al vendedor la app entera.
+    # Mismo criterio que la plomería de tránsito (regla
+    # grupo-transito-solo-UI): el grupo protege la UI, no la mecánica.
+    #
+    # Las LECTURAS no se tocan: el vendedor tiene group_workshop_sales
+    # (solo lectura) para que su formulario pinte estado, proceso y cadena.
+    # No hay ir.rule sobre workshop.*, así que sudo() no salta seguridad de
+    # fila; la trazabilidad la conserva la OT vía sale_order_id/sale_line_id.
+
     def _stone_workshop_create_missing_orders(self, force_lines=False):
-        WorkshopOrder = self.env['workshop.order']
+        WorkshopOrder = self.env['workshop.order'].sudo()
         created_orders = WorkshopOrder
 
         for order in self:
@@ -477,7 +496,10 @@ class SaleOrder(models.Model):
         if selection_lot_ids:
             line._stone_workshop_validate_lots_not_committed_elsewhere(selection_lot_ids)
 
-        WorkshopOrder = self.env['workshop.order']
+        # sudo: la OT y su cadena las crea el sistema al confirmar la
+        # venta. El recordset sudo se propaga a las escrituras de abajo y a
+        # la reserva de placas que dispara workshop.order.create().
+        WorkshopOrder = self.env['workshop.order'].sudo()
         chain_orders = WorkshopOrder
         prev_order = WorkshopOrder
 
