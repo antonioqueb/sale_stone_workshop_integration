@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Sale Stone Workshop Integration',
-    'version': '19.0.7.0.0',
+    'version': '19.0.7.1.0',
     'category': 'Sales/Manufacturing',
     'summary': 'Integra venta, selección de placas, taller y entregas para transformar producto base en producto final',
     'description': """

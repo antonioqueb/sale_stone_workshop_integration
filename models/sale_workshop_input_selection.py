@@ -449,5 +449,24 @@ class SaleStoneWorkshopInputSelection(models.Model):
                     'allocation_status': 'available',
                     'workshop_sale_line_id': False,
                 })
+                # Quant publicado: si ninguna otra gemela lo compromete,
+                # regresa a disponible en el inventario visual.
+                for tl in transit_lines:
+                    quant = tl.quant_id
+                    if not quant or not quant.exists():
+                        continue
+                    if 'transit_inventory_state' not in quant._fields \
+                            or not getattr(quant, 'transit_inventory_published', False):
+                        continue
+                    sibling = self.env['stock.transit.line'].sudo().search([
+                        ('quant_id', '=', quant.id),
+                        ('id', 'not in', transit_lines.ids),
+                        '|', '|',
+                        ('order_id', '!=', False),
+                        ('partner_id', '!=', False),
+                        ('allocation_status', '=', 'reserved'),
+                    ], limit=1)
+                    if not sibling:
+                        quant.sudo().write({'transit_inventory_state': 'available'})
 
         return True
