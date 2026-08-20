@@ -436,4 +436,18 @@ class SaleStoneWorkshopInputSelection(models.Model):
                 'workshop_order_id': False,
             })
 
+            # Si la selección venía de una asignación de TRÁNSITO (Transit
+            # Allocation → filtro Taller), liberar la reserva del material
+            # en el embarque para que vuelva a estar disponible.
+            transit_lines = self.env['stock.transit.line'].sudo().search([
+                ('workshop_sale_line_id', '=', selection.sale_line_id.id),
+                ('lot_id', '=', selection.lot_id.id),
+                ('allocation_status', '=', 'reserved'),
+            ])
+            if transit_lines:
+                transit_lines.with_context(skip_reservation_logic=True).write({
+                    'allocation_status': 'available',
+                    'workshop_sale_line_id': False,
+                })
+
         return True

@@ -8,3 +8,4 @@ from . import sale_order
 from . import workshop_order
 from . import stock_quant
 from . import outbound_workshop
+from . import stock_transit_line

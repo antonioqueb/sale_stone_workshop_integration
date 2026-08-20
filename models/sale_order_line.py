@@ -1901,3 +1901,26 @@ class SaleOrderLine(models.Model):
                 return {}
 
         return {}
+    # -------------------------------------------------------------------------
+    # REPORTE DE DETALLE: líneas con taller muestran el MATERIAL DE ORIGEN
+    # -------------------------------------------------------------------------
+
+    def _get_all_sale_lots_with_qty(self):
+        """Con taller activo, el producto vendido no tiene selección propia:
+        lo que se enseña en el reporte de detalle son los lotes del MATERIAL
+        DE ORIGEN seleccionados/asignados a taller (incluida la asignación
+        hecha desde Transit Allocation), con sus dimensiones reales. Aplica
+        igual a acabados y a cortes (las placas que se van a transformar).
+        Sin selecciones de taller, la línea no muestra lotes."""
+        self.ensure_one()
+        if getattr(self, 'stone_workshop_required', False):
+            selections = self.env['sale.stone.workshop.input.selection'].sudo().search([
+                ('sale_line_id', '=', self.id),
+                ('state', '!=', 'cancelled'),
+                ('lot_id', '!=', False),
+            ], order='sequence, id')
+            return [
+                {'lot': sel.lot_id, 'quantity': sel.qty_in or 0.0}
+                for sel in selections
+            ]
+        return super()._get_all_sale_lots_with_qty()

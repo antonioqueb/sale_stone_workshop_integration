@@ -157,7 +157,7 @@ export class SaleWorkshopInputSelector extends Component {
         this.destroyPopup();
 
         const root = document.createElement("div");
-        root.className = "swis-popup-root";
+        root.className = "stone-popup-root swis-popup-root";
         document.body.appendChild(root);
         this._popupRoot = root;
 
@@ -203,84 +203,105 @@ export class SaleWorkshopInputSelector extends Component {
             },
         };
 
+        // MISMO lenguaje visual que el selector de placas de la venta
+        // (clases stone-* de sale_stone_selection): header con badges,
+        // tarjetas Solicitado/Seleccionado/Pendiente con barra de avance,
+        // filtros y tabla idénticos.
+        const requestedQty = parseFloat(data.requested_qty || 0);
         root.innerHTML = `
-            <div class="swis-overlay" id="swis-overlay">
-                <div class="swis-popup">
-                    <div class="swis-header">
-                        <div>
-                            <div class="swis-title">
-                                <i class="fa fa-cubes me-2"></i>
-                                Placas base a consumir en taller
-                            </div>
-                            <div class="swis-subtitle">
-                                Producto base: <strong>${this._escapeHtml(data.base_product_name || "")}</strong>
-                                <span class="swis-sep">•</span>
-                                Producto final: <strong>${this._escapeHtml(data.product_final_name || "")}</strong>
-                                <span class="swis-sep">•</span>
-                                Puedes combinar materiales distintos: busca por nombre en el filtro Material.
-                            </div>
+            <div class="stone-popup-overlay" id="swis-overlay">
+                <div class="stone-popup-container">
+                    <div class="stone-popup-header">
+                        <div class="stone-popup-title">
+                            <i class="fa fa-cubes"></i>
+                            Placas base a consumir en taller
+                            <span class="stone-popup-subtitle">— ${this._escapeHtml(data.base_product_name || "")} → ${this._escapeHtml(data.product_final_name || "")}</span>
                         </div>
 
-                        <div class="swis-header-actions">
-                            <span class="swis-pill">
+                        <div class="stone-popup-header-actions">
+                            <span class="stone-badge-requested">
                                 <i class="fa fa-bullseye me-1"></i>
-                                Solicitado ${this.fmt(data.requested_qty || 0)}
+                                Solicitado <span>${this.fmt(requestedQty)}</span>
                             </span>
 
-                            <span class="swis-pill swis-pill-selected">
+                            <span class="stone-badge-selected">
                                 <i class="fa fa-check-circle me-1"></i>
                                 <span id="swis-count">0</span> selec.
                             </span>
 
-                            <span class="swis-pill swis-pill-total">
+                            <span class="stone-badge-qty-total">
                                 <i class="fa fa-balance-scale me-1"></i>
                                 <span id="swis-total">0.00</span>
                             </span>
 
-                            <button class="swis-btn swis-btn-primary" id="swis-confirm-top">
+                            <button class="stone-btn stone-btn-primary-dark" id="swis-confirm-top">
                                 <i class="fa fa-check me-1"></i> Confirmar
                             </button>
 
-                            <button class="swis-btn swis-btn-ghost" id="swis-close">
+                            <button class="stone-btn stone-btn-ghost" id="swis-close">
                                 <i class="fa fa-times"></i>
                             </button>
                         </div>
                     </div>
 
-                    <div class="swis-filters">
-                        <div class="swis-filter">
+                    <div class="stone-popup-allocation-summary">
+                        <div class="stone-allocation-card stone-allocation-target">
+                            <span class="stone-allocation-label">Solicitado</span>
+                            <strong>${this.fmt(requestedQty)}</strong>
+                        </div>
+                        <div class="stone-allocation-card stone-allocation-selected">
+                            <span class="stone-allocation-label">Seleccionado</span>
+                            <strong id="swis-sum-selected">0.00</strong>
+                        </div>
+                        <div class="stone-allocation-card stone-allocation-remaining">
+                            <span class="stone-allocation-label">Pendiente</span>
+                            <strong id="swis-sum-pending">${this.fmt(requestedQty)}</strong>
+                        </div>
+                        <div class="stone-allocation-progress-box">
+                            <div class="stone-allocation-progress-head">
+                                <span id="swis-progress-text">0.00 de ${this.fmt(requestedQty)}</span>
+                                <strong id="swis-progress-label">0%</strong>
+                            </div>
+                            <div class="stone-allocation-progress-track">
+                                <div class="stone-allocation-progress-fill" id="swis-progress-fill"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="stone-popup-filters">
+                        <div class="stone-filter-group">
                             <label>Material</label>
-                            <input id="swis-f-product" type="text" placeholder="Cualquier material (vacío = producto base)"/>
+                            <input class="stone-filter-input" id="swis-f-product" type="text" placeholder="Cualquier material (vacío = producto base)"/>
                         </div>
 
-                        <div class="swis-filter">
+                        <div class="stone-filter-group">
                             <label>Lote</label>
-                            <input id="swis-f-lot" type="text" placeholder="Buscar lote..."/>
+                            <input class="stone-filter-input" id="swis-f-lot" type="text" placeholder="Buscar lote..."/>
                         </div>
 
-                        <div class="swis-filter">
+                        <div class="stone-filter-group">
                             <label>Bloque</label>
-                            <input id="swis-f-bloque" type="text" placeholder="Bloque..."/>
+                            <input class="stone-filter-input" id="swis-f-bloque" type="text" placeholder="Bloque..."/>
                         </div>
 
-                        <div class="swis-filter">
+                        <div class="stone-filter-group">
                             <label>Atado</label>
-                            <input id="swis-f-atado" type="text" placeholder="Atado..."/>
+                            <input class="stone-filter-input" id="swis-f-atado" type="text" placeholder="Atado..."/>
                         </div>
 
-                        <div class="swis-filter swis-filter-sm">
+                        <div class="stone-filter-group">
                             <label>Alto mín.</label>
-                            <input id="swis-f-alto" type="number" step="0.01"/>
+                            <input class="stone-filter-input stone-filter-sm" id="swis-f-alto" type="number" step="0.01"/>
                         </div>
 
-                        <div class="swis-filter swis-filter-sm">
+                        <div class="stone-filter-group">
                             <label>Largo mín.</label>
-                            <input id="swis-f-ancho" type="number" step="0.01"/>
+                            <input class="stone-filter-input stone-filter-sm" id="swis-f-ancho" type="number" step="0.01"/>
                         </div>
 
-                        <div class="swis-filter swis-filter-sm">
+                        <div class="stone-filter-group">
                             <label>Tipo</label>
-                            <select id="swis-f-tipo">
+                            <select class="stone-filter-input stone-filter-sm" id="swis-f-tipo">
                                 <option value="">Todos</option>
                                 <option value="placa">Placa</option>
                                 <option value="formato">Formato</option>
@@ -289,36 +310,36 @@ export class SaleWorkshopInputSelector extends Component {
                             </select>
                         </div>
 
-                        <div class="swis-filter-actions">
-                            <button class="swis-btn swis-btn-light" id="swis-clear">
+                        <div class="stone-filter-actions">
+                            <button class="stone-btn stone-btn-clear-all" id="swis-clear">
                                 <i class="fa fa-square-o me-1"></i> Limpiar
                             </button>
                         </div>
 
-                        <div class="swis-filter-stat" id="swis-stat">Buscando...</div>
+                        <div class="stone-filter-stats" id="swis-stat">Buscando...</div>
                     </div>
 
-                    <div class="swis-body" id="swis-body">
-                        <div class="swis-empty">
+                    <div class="stone-popup-body" id="swis-body">
+                        <div class="stone-empty-state">
                             <i class="fa fa-circle-o-notch fa-spin fa-2x"></i>
-                            <div>Cargando inventario...</div>
+                            <div class="stone-empty-text mt-2">Cargando inventario...</div>
                         </div>
                     </div>
 
-                    <div class="swis-footer">
-                        <span id="swis-footer-info">—</span>
-                        <div class="swis-pager">
-                            <button class="swis-btn swis-btn-light" id="swis-prev">
+                    <div class="stone-popup-footer">
+                        <span class="stone-footer-info" id="swis-footer-info">—</span>
+                        <div class="stone-footer-adjust">
+                            <button class="stone-btn stone-btn-outline" id="swis-prev">
                                 <i class="fa fa-chevron-left me-1"></i> Anterior
                             </button>
-                            <span class="swis-page-info" id="swis-page-info">—</span>
-                            <button class="swis-btn swis-btn-light" id="swis-next">
+                            <span id="swis-page-info">—</span>
+                            <button class="stone-btn stone-btn-outline" id="swis-next">
                                 Siguiente <i class="fa fa-chevron-right ms-1"></i>
                             </button>
                         </div>
-                        <div class="swis-footer-actions">
-                            <button class="swis-btn swis-btn-outline" id="swis-cancel">Cancelar</button>
-                            <button class="swis-btn swis-btn-primary-dark" id="swis-confirm-bottom">
+                        <div class="stone-footer-actions">
+                            <button class="stone-btn stone-btn-outline" id="swis-cancel">Cancelar</button>
+                            <button class="stone-btn stone-btn-primary-dark" id="swis-confirm-bottom">
                                 <i class="fa fa-check me-1"></i> Agregar selección
                             </button>
                         </div>
@@ -355,6 +376,21 @@ export class SaleWorkshopInputSelector extends Component {
 
             root.querySelector("#swis-count").textContent = String(count);
             root.querySelector("#swis-total").textContent = this.fmt(total);
+
+            // Tarjetas + barra de avance (mismo patrón que el selector de
+            // placas de la venta).
+            const pending = Math.max(requestedQty - total, 0);
+            const pct = requestedQty > 0 ? Math.min(100, (total / requestedQty) * 100) : 0;
+            const sumSel = root.querySelector("#swis-sum-selected");
+            const sumPen = root.querySelector("#swis-sum-pending");
+            const pFill = root.querySelector("#swis-progress-fill");
+            const pText = root.querySelector("#swis-progress-text");
+            const pLabel = root.querySelector("#swis-progress-label");
+            if (sumSel) sumSel.textContent = this.fmt(total);
+            if (sumPen) sumPen.textContent = this.fmt(pending);
+            if (pFill) pFill.style.width = pct.toFixed(1) + "%";
+            if (pText) pText.textContent = `${this.fmt(total)} de ${this.fmt(requestedQty)}`;
+            if (pLabel) pLabel.textContent = Math.round(pct) + "%";
         };
 
         const updatePager = () => {
@@ -382,9 +418,9 @@ export class SaleWorkshopInputSelector extends Component {
 
             if (st.isLoading && !st.items.length) {
                 body.innerHTML = `
-                    <div class="swis-empty">
+                    <div class="stone-empty-state">
                         <i class="fa fa-circle-o-notch fa-spin fa-2x"></i>
-                        <div>Cargando inventario...</div>
+                        <div class="stone-empty-text mt-2">Cargando inventario...</div>
                     </div>`;
                 stat.innerHTML = '<i class="fa fa-circle-o-notch fa-spin me-1"></i> Buscando...';
                 updateSummary();
@@ -393,9 +429,9 @@ export class SaleWorkshopInputSelector extends Component {
 
             if (!st.items.length) {
                 body.innerHTML = `
-                    <div class="swis-empty">
+                    <div class="stone-empty-state">
                         <i class="fa fa-inbox fa-2x"></i>
-                        <div>Sin resultados. Usa el filtro Material para buscar lotes de otros productos/acabados.</div>
+                        <div class="stone-empty-text mt-2">Sin resultados. Usa el filtro Material para buscar lotes de otros productos/acabados.</div>
                     </div>`;
                 stat.textContent = "0 lotes";
                 footer.textContent = "Sin resultados disponibles.";
@@ -423,30 +459,30 @@ export class SaleWorkshopInputSelector extends Component {
                 const isBase = q.is_base_product !== false;
 
                 rows += `
-                    <tr class="${selected ? "swis-row-selected" : ""}" data-lot-id="${lotId}">
-                        <td class="swis-col-check">
-                            <input type="checkbox" ${selected ? "checked" : ""}/>
+                    <tr class="${selected ? "row-sel" : ""}" data-lot-id="${lotId}">
+                        <td class="col-chk">
+                            <div class="stone-chkbox ${selected ? "checked" : ""}">
+                                ${selected ? '<i class="fa fa-check"></i>' : ""}
+                            </div>
                         </td>
-                        <td class="swis-lot">${this._escapeHtml(lotName)}</td>
-                        <td class="swis-product${isBase ? "" : " swis-product-alt"}"
+                        <td class="cell-lot">${this._escapeHtml(lotName)}</td>
+                        <td class="${isBase ? "" : "swis-product-alt"}"
                             title="${this._escapeHtml(productName)}">
                             ${this._escapeHtml(productName || "-")}
                         </td>
                         <td>${this._escapeHtml(q.x_bloque || "-")}</td>
                         <td>${this._escapeHtml(q.x_atado || "-")}</td>
-                        <td class="text-end">${q.x_alto ? this.fmt(q.x_alto) : "-"}</td>
-                        <td class="text-end">${q.x_ancho ? this.fmt(q.x_ancho) : "-"}</td>
-                        <td class="text-end swis-qty-available">${this.fmt(qtyAvailable)}</td>
-                        <td>
-                            <span class="swis-tag swis-tag-${this._escapeHtml(tipo)}">${this._escapeHtml(tipo || "placa")}</span>
-                        </td>
+                        <td class="col-num">${q.x_alto ? this.fmt(q.x_alto) : "-"}</td>
+                        <td class="col-num">${q.x_ancho ? this.fmt(q.x_ancho) : "-"}</td>
+                        <td class="col-num fw-semibold swis-qty-available">${this.fmt(qtyAvailable)}</td>
+                        <td><span class="stone-tag stone-tag-tipo-${this._escapeHtml(tipo)}">${this._escapeHtml(tipo || "placa")}</span></td>
                         <td>${this._escapeHtml(q.x_color || "-")}</td>
-                        <td class="swis-location">${this._escapeHtml(loc)}</td>
-                        <td class="text-end">
+                        <td class="cell-loc">${this._escapeHtml(loc)}</td>
+                        <td class="col-num col-popup-qty">
                             ${
                                 isPartial
-                                    ? `<input class="swis-qty-input" type="number" step="0.01" min="0" max="${qtyAvailable}" data-lot-id="${lotId}" value="${qtyValue || 0}"/>`
-                                    : `<span class="swis-fixed-qty">${this.fmt(qtyAvailable)}</span>`
+                                    ? `<input class="stone-popup-qty-input swis-qty-input" type="number" step="0.01" min="0" max="${qtyAvailable}" data-lot-id="${lotId}" value="${qtyValue || 0}"/>`
+                                    : `<span class="fw-semibold">${this.fmt(qtyAvailable)}</span>`
                             }
                         </td>
                     </tr>
@@ -454,21 +490,21 @@ export class SaleWorkshopInputSelector extends Component {
             }
 
             body.innerHTML = `
-                <table class="swis-table">
+                <table class="stone-popup-table">
                     <thead>
                         <tr>
-                            <th></th>
+                            <th class="col-chk">✓</th>
                             <th>Lote</th>
                             <th>Material</th>
                             <th>Bloque</th>
                             <th>Atado</th>
-                            <th class="text-end">Alto</th>
-                            <th class="text-end">Largo</th>
-                            <th class="text-end">Disp.</th>
+                            <th class="col-num">Alto</th>
+                            <th class="col-num">Largo</th>
+                            <th class="col-num">Disp.</th>
                             <th>Tipo</th>
                             <th>Color</th>
                             <th>Ubicación</th>
-                            <th class="text-end">A consumir</th>
+                            <th class="col-num">A consumir</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
