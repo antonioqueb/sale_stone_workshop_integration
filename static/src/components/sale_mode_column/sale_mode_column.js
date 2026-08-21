@@ -46,7 +46,13 @@ export class SomSaleModeColumn extends Component {
     }
 
     isDisabled(fname) {
-        return !!this.props.readonly;
+        // SIEMPRE editable directo desde la celda (mismo patrón que
+        // boolean_toggle): props.readonly en una lista solo significa "la
+        // fila no está en edición" y obligaba a dar clic en la línea antes
+        // de poder tocar los modos. Solo se bloquea con la orden cancelada
+        // o bloqueada.
+        const st = this.props.record.data.state;
+        return st === "cancel" || st === "done";
     }
 
     async toggle(fname, ev) {
@@ -70,5 +76,6 @@ registry.category("fields").add("som_sale_mode_column", {
         { name: "stone_workshop_required", type: "boolean" },
         { name: "tc_is_service_line", type: "boolean" },
         { name: "stone_workshop_kind_allowed", type: "boolean" },
+        { name: "state", type: "selection" },
     ],
 });
