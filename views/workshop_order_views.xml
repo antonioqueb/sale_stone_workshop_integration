@@ -92,4 +92,26 @@
             </xpath>
         </field>
     </record>
+
+    <!-- AGRUPACIÓN POR PEDIDO: 5 productos de una venta = 5 OTs, pero se
+         ven JUNTAS bajo su pedido. El buscador permite teclear el folio de
+         la venta, y la lista/kanban abre agrupada por pedido de fábrica. -->
+    <record id="view_workshop_order_search_sale_integration" model="ir.ui.view">
+        <field name="name">workshop.order.search.sale.integration</field>
+        <field name="model">workshop.order</field>
+        <field name="inherit_id" ref="stone_workshop.view_workshop_order_search"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="sale_order_id"/>
+            </field>
+            <filter name="group_state" position="before">
+                <filter name="group_sale_order" string="Pedido de venta"
+                        context="{'group_by': 'sale_order_id'}"/>
+            </filter>
+        </field>
+    </record>
+
+    <record id="stone_workshop.action_workshop_order" model="ir.actions.act_window">
+        <field name="context">{'search_default_group_sale_order': 1}</field>
+    </record>
 </odoo>

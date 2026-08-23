@@ -1229,7 +1229,115 @@ class WorkshopOrder(models.Model):
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         self._sale_workshop_release_unused_selections()
         self._stone_workshop_feed_next_chain_orders()
+
+        # GUÍA DE SIGUIENTE PASO: al terminar una OT de un pedido con varias
+        # OTs, el sistema lleva de la mano al usuario a la siguiente (etapa
+        # de la misma línea primero; después el siguiente producto del
+        # pedido). Sin esto, 5 productos = 5 OTs sueltas y el operador tenía
+        # que ir a buscarlas una por una entre el ruido.
+        if len(self) == 1 and res in (None, True):
+            guided = self._stone_workshop_guided_next_action()
+            if guided:
+                return guided
         return res
+
+    def _stone_workshop_guided_next_action(self):
+        """Notificación con botón que abre la SIGUIENTE OT pendiente.
+
+        Prioridad:
+        1. La siguiente ETAPA de la misma línea (cadena acabado→corte).
+        2. La siguiente OT LISTA del mismo pedido (su etapa previa ya está
+           terminada); si ninguna está lista, la primera viva del pedido.
+        3. Nada pendiente → aviso de pedido con taller COMPLETO.
+        """
+        self.ensure_one()
+        if not self.sale_order_id:
+            return None
+
+        target = None
+        kind = None
+
+        nxt = self.stone_workshop_chain_next_order_id
+        if nxt and nxt.state not in ('done', 'cancel'):
+            target, kind = nxt, 'etapa'
+        else:
+            siblings = self.search([
+                ('sale_order_id', '=', self.sale_order_id.id),
+                ('state', 'not in', ('done', 'cancel')),
+                ('id', '!=', self.id),
+            ], order='stone_workshop_chain_sequence, id')
+            ready = siblings.filtered(
+                lambda o: not o.stone_workshop_chain_prev_order_id
+                or o.stone_workshop_chain_prev_order_id.state == 'done')
+            target = (ready[:1] or siblings[:1]) or None
+            kind = 'producto'
+
+        all_orders = self.search([
+            ('sale_order_id', '=', self.sale_order_id.id),
+            ('state', '!=', 'cancel'),
+        ])
+        done_count = len(all_orders.filtered(lambda o: o.state == 'done'))
+        progreso = _('%(done)s de %(total)s OTs del pedido terminadas.') % {
+            'done': done_count, 'total': len(all_orders)}
+
+        if not target:
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'type': 'success',
+                    'sticky': True,
+                    'title': _('🎉 Taller COMPLETO para %s') % self.sale_order_id.name,
+                    'message': _(
+                        '%(name)s terminada. No quedan órdenes de taller '
+                        'pendientes de este pedido. %(prog)s') % {
+                            'name': self.name, 'prog': progreso},
+                },
+            }
+
+        if kind == 'etapa':
+            titulo = _('Sigue la siguiente ETAPA')
+            mensaje = _(
+                '✅ %(name)s terminada. El mismo producto continúa en '
+                '%(next)s (%(proc)s): su material ya viene del paso '
+                'anterior. %(prog)s') % {
+                    'name': self.name,
+                    'next': target.name,
+                    'proc': target.process_id.display_name or '',
+                    'prog': progreso,
+                }
+        else:
+            titulo = _('Sigue el siguiente producto del pedido')
+            mensaje = _(
+                '✅ %(name)s terminada. Del pedido %(so)s sigue %(next)s'
+                '%(prod)s. %(prog)s') % {
+                    'name': self.name,
+                    'so': self.sale_order_id.name,
+                    'next': target.name,
+                    'prod': (' — %s' % target.sale_product_id.display_name)
+                    if 'sale_product_id' in target._fields
+                    and target.sale_product_id else '',
+                    'prog': progreso,
+                }
+
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'type': 'info',
+                'sticky': True,
+                'title': titulo,
+                'message': mensaje,
+                'next': {
+                    'type': 'ir.actions.act_window',
+                    'res_model': 'workshop.order',
+                    'res_id': target.id,
+                    'view_mode': 'form',
+                    'views': [(False, 'form')],
+                    'target': 'current',
+                },
+            },
+        }
 
     def _sale_workshop_release_unused_selections(self):
         """Libera las selecciones de placas devueltas como no usadas.
