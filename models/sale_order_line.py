@@ -433,16 +433,24 @@ class SaleOrderLine(models.Model):
         }, locked, lock_reason
 
     @api.model
-    def resolve_workshop_chain_recipe(self, input_product_id=None, process_id=None):
+    def resolve_workshop_chain_recipe(self, input_product_id=None, process_id=None, sale_line_id=None):
         """Producto final según el catálogo de Recetas de Proceso.
 
         El workspace de cadena lo usa para deducir la "Entrega" de un paso
         (origen + proceso → final) sin preguntarle al usuario. Devuelve
-        {'id', 'name'} o False si no hay receta."""
+        {'id', 'name'} o False si no hay receta.
+
+        `sale_line_id` (opcional): la receta se prefiere de la compañía de
+        esa venta; sin línea, compañía activa del usuario."""
         if 'workshop.process.recipe' not in self.env:
             return False
+        company = self.env.company
+        if sale_line_id:
+            line = self.browse(int(sale_line_id)).exists()
+            if line and line.company_id:
+                company = line.company_id
         product = self.env['workshop.process.recipe'].resolve_output(
-            input_product_id, process_id)
+            input_product_id, process_id, company=company)
         if not product:
             return False
         return {'id': product.id, 'name': product.display_name}
@@ -932,7 +940,8 @@ class SaleOrderLine(models.Model):
                         sequence=step['sequence'],
                     )
                     vals['stone_workshop_process_line_id'] = process_line.id
-                    workshop = WorkshopOrder.create(vals)
+                    workshop = WorkshopOrder.with_company(order.company_id).with_context(
+                        default_company_id=order.company_id.id).create(vals)
                     process_line.with_context(
                         skip_stone_workshop_chain_resync=True,
                     ).write({'workshop_order_id': workshop.id})
@@ -1026,6 +1035,9 @@ class SaleOrderLine(models.Model):
         warehouse = self.order_id.warehouse_id if self.order_id else False
         if warehouse and warehouse.lot_stock_id:
             domain.append(('location_id', 'child_of', warehouse.lot_stock_id.id))
+        # Stock de la compañía de la venta (puede correr bajo sudo).
+        if self.company_id:
+            domain.append(('company_id', 'in', [self.company_id.id, False]))
 
         qty = 0.0
         for quant in self.env['stock.quant'].search(domain):
@@ -1044,6 +1056,8 @@ class SaleOrderLine(models.Model):
         ]
         if warehouse and warehouse.lot_stock_id:
             weak_domain.append(('location_id', 'child_of', warehouse.lot_stock_id.id))
+        if self.company_id:
+            weak_domain.append(('company_id', '=', self.company_id.id))
         weak_lines = self.env['stock.move.line'].sudo().search(weak_domain)
         qty += sum(weak_lines.mapped('quantity'))
 
@@ -1236,7 +1250,12 @@ class SaleOrderLine(models.Model):
             product_lot_ids = [
                 lot.id for lot in lots if lot.product_id == product
             ]
-            vals_list += self.env['workshop.order'].sudo().prepare_input_line_vals_from_lots(
+            # Compañía de la VENTA: el helper de stone_workshop toma
+            # default_company_id del contexto (o la de la ubicación).
+            company = self.order_id.company_id
+            vals_list += self.env['workshop.order'].sudo().with_company(company).with_context(
+                default_company_id=company.id,
+            ).prepare_input_line_vals_from_lots(
                 product.id,
                 product_lot_ids,
                 location_id=location_id,
@@ -1627,6 +1646,9 @@ class SaleOrderLine(models.Model):
             ('location_id.usage', '=', 'internal'),
             ('quantity', '>', 0),
         ]
+        # Quant con sudo: acotar a la compañía de la VENTA (no env.company).
+        if self.company_id:
+            domain.append(('company_id', 'in', [self.company_id.id, False]))
         if product_name:
             domain += [
                 ('product_id', 'ilike', product_name),
@@ -1683,12 +1705,17 @@ class SaleOrderLine(models.Model):
         # (inventory_visual_enhanced._iv_get_workshop_lot_ids), pero de forma
         # autocontenida para no depender de ese módulo.
         if 'workshop.input.line' in self.env:
-            workshop_blocked_lines = self.env['workshop.input.line'].sudo().search([
+            workshop_blocked_domain = [
                 ('product_id', 'in', involved_products.ids),
                 ('lot_id', '!=', False),
                 ('state', 'not in', ('cancelled', 'done', 'rejected')),
                 ('order_id.state', '=', 'in_workshop'),
-            ])
+            ]
+            if self.company_id:
+                workshop_blocked_domain.append(
+                    ('order_id.company_id', '=', self.company_id.id))
+            workshop_blocked_lines = self.env['workshop.input.line'].sudo().search(
+                workshop_blocked_domain)
             committed_lot_ids |= set(workshop_blocked_lines.mapped('lot_id').ids)
 
         committed_lot_ids -= allowed_current_lot_ids
@@ -1697,14 +1724,17 @@ class SaleOrderLine(models.Model):
         # carrito/escáner ABIERTOS. Se suma de vuelta al libre para que la
         # placa no desaparezca del selector solo por estarse reacomodando.
         weak_qty_by_lot = {}
-        weak_lines = self.env['stock.move.line'].sudo().search([
+        weak_domain = [
             ('product_id', 'in', involved_products.ids),
             ('lot_id', '!=', False),
             ('state', 'in', ('assigned', 'partially_available')),
             ('picking_id.picking_type_code', '=', 'internal'),
             ('picking_id.origin', '=like', 'Carrito - %'),
             ('picking_id.state', 'not in', ('done', 'cancel')),
-        ])
+        ]
+        if self.company_id:
+            weak_domain.append(('company_id', '=', self.company_id.id))
+        weak_lines = self.env['stock.move.line'].sudo().search(weak_domain)
         for weak_line in weak_lines:
             weak_qty_by_lot[weak_line.lot_id.id] = (
                 weak_qty_by_lot.get(weak_line.lot_id.id, 0.0)

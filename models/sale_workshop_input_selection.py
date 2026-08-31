@@ -51,6 +51,7 @@ class SaleStoneWorkshopInputSelection(models.Model):
         string='Compañía',
         readonly=True,
         store=True,
+        index=True,
     )
     partner_id = fields.Many2one(
         related='sale_order_id.partner_id',
@@ -211,6 +212,9 @@ class SaleStoneWorkshopInputSelection(models.Model):
             ]
             if line.location_id:
                 domain.append(('location_id', 'child_of', line.location_id.id))
+            # Stock de la compañía de la venta (ubicaciones compartidas incluidas).
+            if line.company_id:
+                domain.append(('company_id', 'in', [line.company_id.id, False]))
 
             qty = 0.0
             for quant in self.env['stock.quant'].search(domain):
@@ -230,6 +234,8 @@ class SaleStoneWorkshopInputSelection(models.Model):
             ]
             if line.location_id:
                 weak_domain.append(('location_id', 'child_of', line.location_id.id))
+            if line.company_id:
+                weak_domain.append(('company_id', '=', line.company_id.id))
             weak_lines = self.env['stock.move.line'].sudo().search(weak_domain)
             qty += sum(weak_lines.mapped('quantity'))
 

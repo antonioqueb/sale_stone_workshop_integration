@@ -30,6 +30,7 @@ class SaleStoneWorkshopProcessLine(models.Model):
         string='Compañía',
         store=True,
         readonly=True,
+        index=True,
     )
     process_id = fields.Many2one(
         'workshop.process',

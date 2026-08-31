@@ -47,6 +47,8 @@ class StockPicking(models.Model):
             ('lot_id', 'in', lot_ids),
             ('state', 'in', ('selected', 'reserved')),
             ('sale_order_id.state', 'in', ('sale', 'done')),
+            # sudo: solo selecciones de la(s) compañía(s) que recibieron.
+            ('company_id', 'in', done.mapped('company_id').ids),
         ])
         for line in sels.mapped('sale_line_id'):
             workshop = line.stone_workshop_order_id

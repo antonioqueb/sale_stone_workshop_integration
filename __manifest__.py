@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Sale Stone Workshop Integration',
-    'version': '19.0.8.1.0',
+    'version': '19.0.8.2.0',
     'category': 'Sales/Manufacturing',
     'summary': 'Integra venta, selección de placas, taller y entregas para transformar producto base en producto final',
     'description': """
@@ -31,6 +31,7 @@
     ],
     'data': [
         'security/ir.model.access.csv',
+        'security/multi_company_rules.xml',
         'views/product_views.xml',
         'views/sale_order_views.xml',
         'views/workshop_order_views.xml',

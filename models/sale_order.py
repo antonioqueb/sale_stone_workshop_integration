@@ -580,7 +580,11 @@ class SaleOrder(models.Model):
             if step['process_line']:
                 vals['stone_workshop_process_line_id'] = step['process_line'].id
 
-            workshop = WorkshopOrder.create(vals)
+            # with_company: la OT nace en la compañía de la VENTA (defaults
+            # de ubicaciones/tipo de operación de esa compañía, no de la
+            # activa del usuario que confirma).
+            workshop = WorkshopOrder.with_company(self.company_id).with_context(
+                default_company_id=self.company_id.id).create(vals)
 
             if prev_order:
                 prev_order.write({'stone_workshop_chain_next_order_id': workshop.id})

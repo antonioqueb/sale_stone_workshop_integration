@@ -384,6 +384,9 @@ class WorkshopOrder(models.Model):
             ('origin', 'ilike', 'Reserva taller'),
             ('move_ids.move_line_ids.lot_id', 'in', lot_ids),
             ('move_ids.move_line_ids.product_id', 'in', product_ids),
+            # La OT suele correr con sudo (plomería desde la venta): sin esto
+            # el folio de otra compañía podría coincidir y cancelarse.
+            ('company_id', '=', self.company_id.id),
         ]
 
         pickings = self.env['stock.picking'].search(domain)
@@ -529,6 +532,7 @@ class WorkshopOrder(models.Model):
                 ('product_id', '=', input_line.product_id.id),
                 ('lot_id', '=', input_line.lot_id.id),
                 ('location_id', 'child_of', location.id),
+                ('company_id', 'in', [self.company_id.id, False]),
             ]
 
             for quant in Quant.search(domain):
@@ -612,7 +616,9 @@ class WorkshopOrder(models.Model):
         if self.sale_order_id:
             origin = '%s / %s - Reserva taller' % (self.sale_order_id.name, self.name)
 
-        picking = self.env['stock.picking'].with_context(**reservation_ctx).create({
+        # with_company: picking/moves nacen en la compañía de la OT (= la de
+        # la venta), aunque el usuario tenga otra compañía activa.
+        picking = self.env['stock.picking'].with_company(self.company_id).with_context(**reservation_ctx).create({
             'picking_type_id': picking_type.id,
             'location_id': self.location_src_id.id,
             'location_dest_id': self.location_workshop_id.id,
@@ -623,8 +629,8 @@ class WorkshopOrder(models.Model):
         moves = self.env['stock.move']
         move_specs = []
 
-        StockMove = self.env['stock.move']
-        StockMoveLine = self.env['stock.move.line']
+        StockMove = self.env['stock.move'].with_company(self.company_id)
+        StockMoveLine = self.env['stock.move.line'].with_company(self.company_id)
 
         for line in input_lines:
             source_location = line.location_id or self.location_src_id
@@ -770,6 +776,7 @@ class WorkshopOrder(models.Model):
             location_ids = set(
                 self.env['stock.location'].search([
                     ('id', 'child_of', location.id),
+                    ('company_id', 'in', [self.company_id.id, False]),
                 ]).ids
             )
 
@@ -817,6 +824,7 @@ class WorkshopOrder(models.Model):
             location_ids = set(
                 self.env['stock.location'].search([
                     ('id', 'child_of', location.id),
+                    ('company_id', 'in', [self.company_id.id, False]),
                 ]).ids
             )
 
@@ -843,6 +851,7 @@ class WorkshopOrder(models.Model):
             ('product_id', '=', product.id),
             ('lot_id', '=', lot.id),
             ('location_id.usage', '=', 'internal'),
+            ('company_id', 'in', [self.company_id.id, False]),
         ]
 
         if location:
@@ -1474,7 +1483,10 @@ class WorkshopOrder(models.Model):
                 data['area'] += order._output_line_area(output)
                 data['pieces'] += output.pieces or 0
 
-            vals_list = nxt.prepare_input_line_vals_from_lots(
+            # Compañía de la OT siguiente (= la de la venta), no la activa.
+            vals_list = nxt.with_company(nxt.company_id).with_context(
+                default_company_id=nxt.company_id.id,
+            ).prepare_input_line_vals_from_lots(
                 nxt.input_product_id.id,
                 lot_ids,
                 location_id=nxt.location_src_id.id if nxt.location_src_id else False,

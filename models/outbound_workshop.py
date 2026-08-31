@@ -46,6 +46,8 @@ class SaleDeliveryLiveMap(models.TransientModel):
             ('state', '=', 'draft'),
             ('sale_workshop_reservation_picking_id', '!=', False),
             ('sale_workshop_reservation_picking_id.state', 'in', _PENDIENTE),
+            # Tablero (sudo): compañías activas del usuario.
+            ('company_id', 'in', self.env.companies.ids),
         ], order='create_date asc')
 
     @api.model
