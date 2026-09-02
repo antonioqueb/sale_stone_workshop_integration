@@ -1949,8 +1949,12 @@ class SaleOrderLine(models.Model):
                 ('state', '!=', 'cancelled'),
                 ('lot_id', '!=', False),
             ], order='sequence, id')
-            return [
-                {'lot': sel.lot_id, 'quantity': sel.qty_in or 0.0}
-                for sel in selections
-            ]
+            # Sin selección de taller la línea NO se queda en blanco: se
+            # muestran las placas asignadas/movidas como en cualquier línea
+            # (antes devolvía [] y el reporte perdía placas ya asignadas).
+            if selections:
+                return [
+                    {'lot': sel.lot_id, 'quantity': sel.qty_in or 0.0}
+                    for sel in selections
+                ]
         return super()._get_all_sale_lots_with_qty()
