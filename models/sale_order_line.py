@@ -1403,13 +1403,23 @@ class SaleOrderLine(models.Model):
         Selection = self.env['sale.stone.workshop.input.selection']
         active_selections = self._stone_workshop_active_input_selections()
 
+        # PLACAS YA CONSUMIDAS EN TALLER: se conservan intactas. Antes
+        # cualquier cambio (incluso AGREGAR placas nuevas) se rechazaba si
+        # había una sola consumida, lo que impedía asignar más material a
+        # una OT en curso (V/1655: 69 placas consumidas bloqueaban todo).
+        # Ahora solo se prohíbe QUITAR una consumida; las demás se agregan o
+        # quitan con normalidad y las consumidas ni se reescriben.
         locked = active_selections.filtered(
             lambda s: s.workshop_input_line_id and s.workshop_input_line_id.is_consumed
         )
-        if locked:
+        removed_locked = locked.filtered(lambda s: s.lot_id.id not in safe_lot_ids)
+        if removed_locked:
             raise UserError(_(
-                'No puedes modificar la selección porque ya hay placas enviadas/consumidas en taller: %s'
-            ) % ', '.join(locked.mapped('lot_id.name')))
+                'No puedes quitar placas que ya fueron enviadas/consumidas en '
+                'taller: %s. Puedes agregar placas nuevas; las consumidas se '
+                'conservan en la selección.'
+            ) % ', '.join(removed_locked.mapped('lot_id.name')))
+        locked_lot_ids = set(locked.mapped('lot_id').ids)
 
         vals_list = self._stone_workshop_prepare_selection_vals_from_lots(
             safe_lot_ids,
@@ -1444,6 +1454,9 @@ class SaleOrderLine(models.Model):
                 continue
 
             selection = active_selections.filtered(lambda s: s.lot_id.id == lot_id)[:1]
+            if selection and lot_id in locked_lot_ids:
+                # Consumida en taller: no se toca (ni cantidad ni ubicación).
+                continue
             if selection:
                 allowed_vals = dict(vals)
                 allowed_vals.pop('sale_order_id', None)
@@ -1474,12 +1487,13 @@ class SaleOrderLine(models.Model):
         if not active_selections:
             return False
 
-        if workshop.state in ('in_workshop', 'done', 'cancel'):
-            consumed = active_selections.filtered(
-                lambda s: s.workshop_input_line_id and s.workshop_input_line_id.is_consumed
-            )
-            if consumed:
-                return True
+        # OT terminada o cancelada: no se le empuja nada. En proceso
+        # (in_workshop) SÍ: las placas nuevas se agregan como líneas de
+        # entrada y las ya consumidas se saltan en el ciclo de abajo. Antes
+        # una sola consumida hacía return y las placas nuevas quedaban
+        # seleccionadas en la venta pero jamás llegaban a la OT.
+        if workshop.state in ('done', 'cancel'):
+            return True
 
         # sudo: las líneas de entrada de la OT las escribe el sistema con
         # las placas que el vendedor eligió en SU venta.
