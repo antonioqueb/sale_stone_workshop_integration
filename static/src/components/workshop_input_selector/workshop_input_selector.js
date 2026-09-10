@@ -191,6 +191,10 @@ export class SaleWorkshopInputSelector extends Component {
             page: 0,
             isLoading: false,
             pendingIds: new Set(data.selected_lot_ids || []),
+            // Foto de lo que el popup vio al abrirse: el guardado solo
+            // cancela lo que estaba aquí y el usuario desmarcó; lo agregado
+            // desde otra pestaña/usuario mientras tanto se conserva.
+            knownIds: Array.from(data.selected_lot_ids || []),
             pendingBreakdown: { ...(data.breakdown || {}) },
             filters: {
                 product_name: "",
@@ -626,6 +630,7 @@ export class SaleWorkshopInputSelector extends Component {
                     {
                         lot_ids: Array.from(st.pendingIds),
                         breakdown: st.pendingBreakdown,
+                        known_lot_ids: st.knownIds,
                     }
                 );
 

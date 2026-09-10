@@ -1393,11 +1393,30 @@ class SaleOrderLine(models.Model):
             } for selection in selections],
         }
 
-    def write_workshop_input_selection_from_lots(self, lot_ids=None, breakdown=None):
+    def write_workshop_input_selection_from_lots(self, lot_ids=None, breakdown=None,
+                                                 known_lot_ids=None):
+        """Guarda la selección de placas base del popup.
+
+        ``known_lot_ids``: lotes que el popup TENÍA cargados al abrirse. El
+        guardado es un DIFF contra esa foto: solo se cancelan selecciones
+        que el popup vio y el usuario desmarcó. Las selecciones creadas
+        mientras el popup estaba abierto (otra pestaña, otro usuario, el
+        filtro Taller de Transit Allocation) se conservan. Sin este
+        parámetro (clientes viejos) se mantiene el reemplazo total.
+
+        Incidencia V/498 (9 sep 2026): un popup abierto con una foto vieja
+        guardó [59, 76, 91] y canceló de golpe las otras 4 placas recién
+        agregadas de la misma línea; el cliente lo vio como "3 aceptadas y
+        4 canceladas" al generar el ticket de taller.
+        """
         self.ensure_one()
         self._stone_workshop_assert_can_select_base_inputs()
 
         safe_lot_ids = self._stone_workshop_safe_int_list(lot_ids)
+        known_ids = (
+            set(self._stone_workshop_safe_int_list(known_lot_ids))
+            if known_lot_ids is not None else None
+        )
         self._stone_workshop_validate_lots_not_committed_elsewhere(safe_lot_ids)
 
         Selection = self.env['sale.stone.workshop.input.selection']
@@ -1435,6 +1454,21 @@ class SaleOrderLine(models.Model):
                 vals_by_lot[int(lot_id)] = vals
 
         to_cancel = active_selections.filtered(lambda s: s.lot_id.id not in safe_lot_ids)
+        if known_ids is not None:
+            # Diff: solo lo que el popup conocía y quedó desmarcado.
+            to_cancel = to_cancel.filtered(lambda s: s.lot_id.id in known_ids)
+        if to_cancel:
+            _logger.info(
+                "[SWIS] línea %s: se cancelan %d selecciones de placas base por "
+                "guardado del selector: %s (marcadas: %s, conocidas: %s)",
+                self.id, len(to_cancel), to_cancel.mapped('lot_id.name'),
+                safe_lot_ids, sorted(known_ids) if known_ids is not None else 'todas')
+            if self.order_id:
+                self.order_id.message_post(body=Markup(
+                    "🧱 <b>Placas base quitadas de la selección de taller</b> "
+                    "(%s): %s") % (
+                        self.product_id.display_name or self.name or self.id,
+                        ', '.join(to_cancel.mapped('lot_id.name'))))
         for selection in to_cancel:
             input_line = selection.workshop_input_line_id
             if input_line and input_line.exists() and not input_line.is_consumed:
