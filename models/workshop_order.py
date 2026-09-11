@@ -634,6 +634,19 @@ class WorkshopOrder(models.Model):
 
         for line in input_lines:
             source_location = line.location_id or self.location_src_id
+            # La ubicación de la selección se fijó al elegir la placa (a
+            # veces aún en tránsito → vacía) y cae en location_src_id =
+            # SOM/Existencias, el PADRE: la reserva nacía ahí y al validar
+            # dejaba el padre negativo con el bin intacto (T-TALLER/2026/0012,
+            # 69 placas). Se resuelve el bin REAL del quant al reservar.
+            if line.lot_id and (
+                    not line.location_id or line.location_id.child_ids):
+                quant = self._get_lot_best_quant(
+                    line.product_id, line.lot_id,
+                    location=self.location_src_id,
+                ) if hasattr(self, '_get_lot_best_quant') else False
+                if quant and quant.location_id:
+                    source_location = quant.location_id
 
             move_vals = {
                 'picking_id': picking.id,
