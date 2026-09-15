@@ -174,7 +174,7 @@ class SaleOrderLine(models.Model):
         ),
     )
     stone_workshop_process_chain_count = fields.Integer(
-        string='Procesos adicionales',
+        string='Núm. procesos adicionales',
         compute='_compute_stone_workshop_process_chain_count',
     )
 

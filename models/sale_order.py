@@ -19,7 +19,7 @@ class SaleOrder(models.Model):
         readonly=True,
     )
     stone_workshop_order_count = fields.Integer(
-        string='Órdenes de taller',
+        string='Núm. órdenes de taller',
         compute='_compute_stone_workshop_order_count',
     )
     stone_workshop_pending_count = fields.Integer(
