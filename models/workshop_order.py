@@ -1362,14 +1362,19 @@ class WorkshopOrder(models.Model):
         }
 
     def _sale_workshop_release_unused_selections(self):
-        """Libera las selecciones de placas devueltas como no usadas.
+        """Placas devueltas como NO usadas al declarar el resultado.
 
-        Al declarar el resultado, las placas nunca registradas en bitácora se
-        devuelven al stock origen con su línea de entrada en 'pending'. Si la
-        selección comercial quedara activa ('selected'), la placa seguiría
-        contando como comprometida en los selectores de venta y taller aunque
-        físicamente esté disponible. Aquí se cancela esa selección para
-        liberarla de verdad.
+        - Si la línea de venta todavía debe producto (V/306: 20 de 45 placas
+          procesadas), las placas se quedan con la VENTA como 'Seleccionada'
+          y sin OT, listas para una OT de seguimiento (Crear OT taller en la
+          línea). Su línea de entrada se cancela para que reabrir la OT vieja
+          no las vuelva a consumir.
+        - Si la línea ya quedó cubierta, se liberan (selección cancelada)
+          para otras ventas.
+
+        Antes se buscaba la línea de entrada en 'pending', pero el cierre la
+        deja en 'done' (_refresh_line_states): las selecciones quedaban
+        'Movida a taller' con la placa física libre y sin reserva.
         """
         for order in self:
             stale = order.sale_workshop_input_selection_ids.filtered(
@@ -1377,12 +1382,35 @@ class WorkshopOrder(models.Model):
                     s.state != 'cancelled'
                     and s.workshop_input_line_id
                     and not s.workshop_input_line_id.is_consumed
-                    and s.workshop_input_line_id.state == 'pending'
+                    and s.workshop_input_line_id.return_picking_id
             )
             if not stale:
                 continue
 
             lots = ', '.join(stale.mapped('lot_id.name'))
+            line = order.sale_line_id
+            keep = bool(line) and line.order_id.state in ('sale', 'done') \
+                and line._stone_workshop_pending_target_qty() > 0.0001
+            inputs = stale.mapped('workshop_input_line_id').sudo()
+            if keep:
+                stale.write({
+                    'state': 'selected',
+                    'workshop_order_id': False,
+                    'workshop_input_line_id': False,
+                })
+                inputs.write({'state': 'cancelled'})
+                order.message_post(body=_(
+                    'Placas no usadas devueltas y guardadas para la venta '
+                    '(pendientes de otra OT): %s.'
+                ) % lots)
+                if order.sale_order_id:
+                    order.sale_order_id.message_post(body=_(
+                        'Taller %(workshop)s terminó con placas sin procesar; '
+                        'siguen apartadas para esta venta y se pueden mandar a '
+                        'una nueva OT con "Crear OT taller": %(lots)s.'
+                    ) % {'workshop': order.name, 'lots': lots})
+                continue
+
             stale.write({'state': 'cancelled'})
             order.message_post(body=_(
                 'Selecciones liberadas por devolución de placas no usadas: %s.'

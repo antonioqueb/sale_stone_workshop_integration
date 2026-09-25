@@ -1124,6 +1124,36 @@ class SaleOrderLine(models.Model):
 
         return float_compare(covered, required, precision_rounding=rounding) < 0
 
+    def _stone_workshop_done_orders(self):
+        """OTs terminadas de esta línea (la vinculada y las anteriores)."""
+        self.ensure_one()
+        return self.env['workshop.order'].sudo().search([
+            ('sale_line_id', '=', self.id),
+            ('state', '=', 'done'),
+            ('stone_workshop_chain_sequence', 'in', [1, False]),
+        ])
+
+    def _stone_workshop_pending_target_qty(self):
+        """Solicitado − lo producido por las OTs terminadas de la línea."""
+        self.ensure_one()
+        produced = 0.0
+        for workshop in self._stone_workshop_done_orders():
+            # La cadena se mide al final: lo que produjo su último paso.
+            last = workshop
+            while last.stone_workshop_chain_next_order_id:
+                last = last.stone_workshop_chain_next_order_id
+            if last.state != 'done':
+                continue
+            produced += sum(
+                (o.qty_out or 0.0) for o in last._stone_workshop_chain_produced_outputs())
+        return max((self.product_uom_qty or 0.0) - produced, 0.0)
+
+    def _stone_workshop_followup_selections(self):
+        """Placas que siguen con la venta sin OT (devueltas sin procesar)."""
+        self.ensure_one()
+        return self.stone_workshop_input_selection_ids.filtered(
+            lambda s: s.state == 'selected' and not s.workshop_order_id)
+
     def _stone_workshop_production_target_vals(self):
         """Objetivo de producción de la OT según la UoM del producto vendido.
 
@@ -1134,7 +1164,9 @@ class SaleOrderLine(models.Model):
         fueran m², distorsionando estimados de tiempo y validaciones de corte.
         """
         self.ensure_one()
-        qty = self.product_uom_qty or 0.0
+        # OT de seguimiento: descuenta lo que ya produjeron las OTs
+        # terminadas de esta línea (V/306: 2ª OT por las placas restantes).
+        qty = self._stone_workshop_pending_target_qty()
         Selection = self.env['sale.stone.workshop.input.selection']
 
         if self.product_id and Selection._product_uom_is_area(self.product_id):

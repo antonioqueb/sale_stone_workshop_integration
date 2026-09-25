@@ -323,8 +323,22 @@ class SaleOrder(models.Model):
             return _('no está marcada como Solo taller.')
         # Una OT cancelada no cuenta como vinculada: si la venta se canceló y
         # se volvió a confirmar, la línea debe poder generar una OT nueva.
-        if line.stone_workshop_order_id and line.stone_workshop_order_id.state != 'cancel':
-            return _('ya tiene una orden de taller vinculada.')
+        linked = line.stone_workshop_order_id
+        if linked and linked.state != 'cancel':
+            # OT de SEGUIMIENTO: la anterior terminó, la línea aún debe
+            # producto y le quedan placas sin procesar (V/306, OT 0013 cerró
+            # con 20 de 45). Sin esto la venta decía "ya tiene OT" para siempre.
+            followup = (
+                manual
+                and linked.state == 'done'
+                and line._stone_workshop_followup_selections()
+                and line._stone_workshop_pending_target_qty() > 0.0001
+            )
+            if not followup:
+                if linked.state == 'done':
+                    return _('su orden de taller %s ya terminó y no le quedan placas '
+                             'pendientes por procesar.') % linked.name
+                return _('ya tiene una orden de taller vinculada.')
         if not line.stone_workshop_base_product_id:
             return _('no tiene producto base configurado.')
         if not line.stone_workshop_process_id:
