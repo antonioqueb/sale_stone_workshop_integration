@@ -1250,6 +1250,7 @@ class WorkshopOrder(models.Model):
         ).action_declare_result()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
         self._sale_workshop_release_unused_selections()
+        self.sale_workshop_input_selection_ids._sync_state_from_workshop_input()
         self._stone_workshop_feed_next_chain_orders()
 
         # GUÍA DE SIGUIENTE PASO: al terminar una OT de un pedido con varias
@@ -1271,6 +1272,7 @@ class WorkshopOrder(models.Model):
             self.with_context(**self._sale_workshop_stock_context()),
         ).action_declare_partial()
         self._sale_workshop_assign_outputs_to_sale(manual=False)
+        self.sale_workshop_input_selection_ids._sync_state_from_workshop_input()
         self._stone_workshop_feed_next_chain_orders()
         return res
 
@@ -1621,7 +1623,7 @@ class WorkshopOrder(models.Model):
                 order._sale_workshop_cancel_input_reservation(reset_lines=True)
 
             order.sale_workshop_input_selection_ids.filtered(
-                lambda s: s.state != 'moved_to_workshop'
+                lambda s: s.state not in ('moved_to_workshop', 'processed')
             ).write({'state': 'cancelled'})
 
         return super().action_cancel()

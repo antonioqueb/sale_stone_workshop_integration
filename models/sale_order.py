@@ -212,7 +212,7 @@ class SaleOrder(models.Model):
                 ) % ', '.join(draft_workshops.mapped('name')))
 
             leftover = order.stone_workshop_input_selection_ids.filtered(
-                lambda s: s.state not in ('cancelled', 'moved_to_workshop')
+                lambda s: s.state not in ('cancelled', 'moved_to_workshop', 'processed')
             )
             if leftover:
                 leftover.write({'state': 'cancelled'})

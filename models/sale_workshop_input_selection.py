@@ -12,6 +12,10 @@ WORKSHOP_INPUT_SELECTION_STATES = [
     ('selected', 'Seleccionada'),
     ('reserved', 'Reservada para taller'),
     ('moved_to_workshop', 'Movida a taller'),
+    # Ya transformada en producto final (su lote base dejó de existir): no
+    # compromete nada. Antes seguía como "Movida a taller" para siempre y la
+    # venta mostraba 45 placas en taller cuando 20 ya estaban terminadas.
+    ('processed', 'Procesada en taller'),
     ('cancelled', 'Cancelada'),
 ]
 
@@ -406,13 +410,16 @@ class SaleStoneWorkshopInputSelection(models.Model):
 
     def _sync_state_from_workshop_input(self):
         for selection in self:
+            if selection.state == 'cancelled':
+                continue
             input_line = selection.workshop_input_line_id
             if not input_line:
-                if selection.state != 'cancelled':
-                    selection.state = 'selected'
+                selection.state = 'selected'
                 continue
 
-            if input_line.state in ('in_progress', 'done'):
+            if input_line.state == 'done' and input_line.is_used:
+                selection.state = 'processed'
+            elif input_line.state in ('in_progress', 'done'):
                 selection.state = 'moved_to_workshop'
             elif input_line.state == 'reserved_for_workshop':
                 selection.state = 'reserved'

@@ -31,5 +31,9 @@ def migrate(cr, version):
     for order in touched:
         with cr.savepoint():
             order._sale_workshop_release_unused_selections()
+    # Placas ya transformadas: de "Movida a taller" a "Procesada en taller".
+    for order in orders:
+        with cr.savepoint():
+            order.sale_workshop_input_selection_ids._sync_state_from_workshop_input()
     _logger.info('[sale_stone_workshop_integration] OTs con placas no usadas saneadas: %s',
                  touched.mapped('name'))
