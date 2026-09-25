@@ -1263,6 +1263,17 @@ class WorkshopOrder(models.Model):
                 return guided
         return res
 
+    def action_declare_partial(self):
+        """Entrega parcial: las placas terminadas quedan asignadas al pedido
+        (o alimentan el siguiente paso de la cadena) sin cerrar la OT."""
+        res = super(
+            WorkshopOrder,
+            self.with_context(**self._sale_workshop_stock_context()),
+        ).action_declare_partial()
+        self._sale_workshop_assign_outputs_to_sale(manual=False)
+        self._stone_workshop_feed_next_chain_orders()
+        return res
+
     def _stone_workshop_guided_next_action(self):
         """Notificación con botón que abre la SIGUIENTE OT pendiente.
 
@@ -1474,13 +1485,19 @@ class WorkshopOrder(models.Model):
             if not nxt.input_product_id:
                 continue
 
-            # Si la siguiente orden ya tiene entradas activas, no duplicar.
-            if nxt.input_line_ids.filtered(lambda l: l.state != 'cancelled'):
-                continue
+            # Incremental (entregas parciales): solo los lotes que la
+            # siguiente orden aún no tiene como entrada; antes, con cualquier
+            # entrada activa se saltaba todo y los parciales posteriores
+            # nunca llegaban al siguiente paso.
+            fed_lot_ids = set(nxt.input_line_ids.filtered(
+                lambda l: l.state != 'cancelled').mapped('lot_id').ids)
 
             produced = order._stone_workshop_chain_produced_outputs().filtered(
                 lambda o: o.product_id == nxt.input_product_id
+                and o.lot_id.id not in fed_lot_ids
             )
+            if not produced and fed_lot_ids:
+                continue
 
             lot_ids = produced.mapped('lot_id').ids
             if not lot_ids:
