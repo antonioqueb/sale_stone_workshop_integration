@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="sale_stone_workshop_integration.SampleRequestErr">
+        <div t-if="msg" class="o_sm_err"><i class="fa fa-exclamation-circle" title=""/> <t t-esc="msg"/></div>
+    </t>
+
+    <t t-name="sale_stone_workshop_integration.SampleRequest">
+        <div class="o_sample_request o_action">
+          <div class="o_sm_scroll" t-ref="root">
+            <div class="o_sm_wrap">
+
+                <!-- ═══ Cabecera ═══ -->
+                <div class="o_sm_head">
+                    <span class="o_sm_head_icon"><i class="fa fa-th-large" title=""/></span>
+                    <div>
+                        <h1>Nueva solicitud de muestras</h1>
+                        <div class="o_sm_sub">Proceso en taller (acabados en orden y corte) o entrega de placas completas. Requiere autorización.</div>
+                    </div>
+                </div>
+
+                <div t-if="state.loading" class="o_sm_card o_sm_center">
+                    <i class="fa fa-circle-o-notch fa-spin" title="Cargando"/> Cargando…
+                </div>
+                <div t-elif="state.loadError" class="o_sm_card o_sm_center text-danger" t-esc="state.loadError"/>
+
+                <!-- ═══ Enviada ═══ -->
+                <div t-elif="state.done" class="o_sm_card o_sm_success">
+                    <div class="o_sm_success_icon"><i class="fa fa-paper-plane" title="Enviada"/></div>
+                    <h2>Solicitud <t t-esc="state.done.name"/> enviada a autorización</h2>
+                    <p>Los autorizadores la reciben en su Centro de Actividades. Te avisaremos en cuanto la decidan; sus lotes ya quedaron apartados para la muestra.</p>
+                    <div class="o_sm_actions center">
+                        <button class="btn btn-primary" t-on-click="openRequest">Ver solicitud</button>
+                        <button class="btn btn-secondary" t-on-click="openList">Mis solicitudes</button>
+                        <button class="btn btn-link" t-on-click="another">Pedir otra muestra</button>
+                    </div>
+                </div>
+
+                <t t-else="">
+                    <!-- ═══ Pasos ═══ -->
+                    <ol class="o_sm_steps">
+                        <t t-foreach="steps" t-as="s" t-key="s.key">
+                            <li t-att-class="stepClass(s)" t-on-click="() => this.clickStep(s)">
+                                <span class="n"><i t-if="s.n &lt; state.step" class="fa fa-check" title=""/><t t-else="" t-esc="s.n"/></span>
+                                <span class="t" t-esc="s.short"/>
+                            </li>
+                        </t>
+                    </ol>
+
+                    <div class="o_sm_card">
+                        <h2 class="o_sm_title"><span class="num" t-esc="state.step"/> <t t-esc="currentStep.title"/></h2>
+
+                        <!-- ═══ Cliente ═══ -->
+                        <section t-if="currentStep.key === 'client'">
+                            <label class="o_sm_label">Cliente <span class="req">*</span></label>
+                            <div t-if="state.partner" class="o_sm_picked">
+                                <i class="fa fa-user" title=""/> <b t-esc="state.partner.name"/>
+                                <button type="button" class="btn btn-link btn-sm" t-on-click="clearPartner">Cambiar</button>
+                            </div>
+                            <div t-else="" t-att-class="{ 'o_sm_search': true, 'o_sm_invalid': state.errors.partner_id }">
+                                <i class="fa fa-search" title=""/>
+                                <input type="text" placeholder="Escribe el nombre del cliente…" t-att-value="state.partnerQuery"
+                                       t-on-input="onPartnerQuery"/>
+                                <div t-if="state.partnerResults.length" class="o_sm_results">
+                                    <button type="button" t-foreach="state.partnerResults" t-as="p" t-key="p.id" t-on-click="() => this.pickPartner(p)">
+                                        <i class="fa fa-user-o" title=""/> <t t-esc="p.name"/>
+                                    </button>
+                                </div>
+                            </div>
+                            <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.partner_id"/></t>
+
+                            <div class="o_sm_grid mt-3">
+                                <div class="o_sm_field">
+                                    <label>Proyecto</label>
+                                    <select t-on-change="onProject" t-att-disabled="!state.partner">
+                                        <option value="">Sin proyecto</option>
+                                        <t t-foreach="state.projects" t-as="p" t-key="p.id">
+                                            <option t-att-value="p.id" t-att-selected="isProject(p)" t-esc="p.name"/>
+                                        </t>
+                                    </select>
+                                </div>
+                                <div class="o_sm_field">
+                                    <label>Fecha requerida</label>
+                                    <input type="date" t-att-min="state.data.today" t-att-value="state.dateNeeded" t-on-change="onDate"/>
+                                </div>
+                                <div class="o_sm_field wide">
+                                    <label>Dirección de entrega</label>
+                                    <textarea rows="2" placeholder="A dónde se entregan las muestras" t-att-value="state.address" t-on-input="onAddress"/>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- ═══ Tipo ═══ -->
+                        <section t-if="currentStep.key === 'type'">
+                            <div t-att-class="{ 'o_sm_types': true, 'o_sm_invalid': state.errors.sample_type }">
+                                <button type="button" t-att-class="{ 'o_sm_type': true, on: state.sampleType === 'cut' }" t-on-click="() => this.setType('cut')">
+                                    <span class="ic"><i class="fa fa-scissors" title=""/></span>
+                                    <span class="n">Proceso en taller</span>
+                                    <span class="d">Acabados en orden (matizar, busardear, cepillar…) y/o corte de muestras. Logística lleva el material a Taller con pick ticket.</span>
+                                </button>
+                                <button type="button" t-att-class="{ 'o_sm_type': true, on: state.sampleType === 'delivery' }" t-on-click="() => this.setType('delivery')">
+                                    <span class="ic"><i class="fa fa-truck" title=""/></span>
+                                    <span class="n">Entrega de placas</span>
+                                    <span class="d">Se entregan placas completas al cliente, sin proceso. Sale con remisión.</span>
+                                </button>
+                            </div>
+                            <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.sample_type"/></t>
+                            <p class="o_sm_hint mt-3"><i class="fa fa-info-circle" title=""/> En ambos casos el material se consume: sale del inventario y no se genera ningún producto. No tiene precio.</p>
+                        </section>
+
+                        <!-- ═══ Material ═══ -->
+                        <section t-if="currentStep.key === 'material'">
+                            <p class="o_sm_hint">Busca por material, lote o bloque y toca el lote para agregarlo. Solo aparecen lotes libres (sin venta, apartado, taller ni otra muestra).</p>
+                            <div class="o_sm_search mb-3">
+                                <i class="fa fa-search" title=""/>
+                                <input type="text" placeholder="Material, código, lote o bloque…" t-att-value="state.lotQuery" t-on-input="onLotQuery"/>
+                                <i t-if="state.searching" class="fa fa-circle-o-notch fa-spin" title=""/>
+                            </div>
+
+                            <div t-if="state.selected.length" class="o_sm_selected">
+                                <div class="o_sm_selected_head">
+                                    <b>Seleccionados</b> · <t t-esc="state.selected.length"/> lote(s) · <t t-esc="fmtQty(totalM2)"/> m²
+                                </div>
+                                <div class="o_sm_table_wrap">
+                                    <table class="o_sm_table">
+                                        <thead><tr><th class="l">Material</th><th>Lote</th><th>Medidas</th><th>Disponible</th><th class="qty">A consumir</th><th/></tr></thead>
+                                        <tbody>
+                                            <tr t-foreach="state.selected" t-as="l" t-key="l.lot_id" class="sel">
+                                                <td class="l"><div class="p" t-esc="l.product"/><div class="d" t-if="l.block">Bloque <t t-esc="l.block"/> · <t t-esc="l.location"/></div><div class="d" t-else="" t-esc="l.location"/></td>
+                                                <td class="b" t-esc="l.lot"/>
+                                                <td t-esc="fmtDims(l)"/>
+                                                <td><t t-esc="fmtQty(l.qty)"/> <small t-esc="l.uom"/></td>
+                                                <td class="qty">
+                                                    <div class="o_sm_qty">
+                                                        <input type="number" min="0" step="any" inputmode="decimal" t-att-value="l.take" t-on-input="(ev) => this.onTake(l, ev)"/>
+                                                        <small t-esc="l.uom"/>
+                                                    </div>
+                                                </td>
+                                                <td><button type="button" class="btn btn-link text-danger btn-sm" t-on-click="() => this.removeLot(l)" title="Quitar"><i class="fa fa-trash-o" title="Quitar"/></button></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.lines"/></t>
+
+                            <div class="o_sm_lots">
+                                <button type="button" class="o_sm_lot" t-foreach="state.lotResults" t-as="l" t-key="l.lot_id" t-on-click="() => this.addLot(l)">
+                                    <span class="top"><b t-esc="l.lot"/><i class="fa fa-plus-circle" title="Agregar"/></span>
+                                    <span class="p" t-esc="l.product"/>
+                                    <span class="d"><t t-if="l.block">Bloque <t t-esc="l.block"/> · </t><t t-esc="fmtDims(l)"/></span>
+                                    <span class="q"><t t-esc="fmtQty(l.qty)"/> <t t-esc="l.uom"/> <span class="loc" t-if="l.location">· <t t-esc="l.location"/></span></span>
+                                </button>
+                                <div t-if="!state.lotResults.length and !state.searching" class="o_sm_empty">Sin lotes libres con esa búsqueda.</div>
+                            </div>
+                        </section>
+
+                        <!-- ═══ Taller: ruta de acabados EN ORDEN + corte final ═══ -->
+                        <section t-if="currentStep.key === 'workshop'">
+                            <div class="o_sm_block">
+                                <div class="o_sm_block_head"><span class="b">1</span> <b>Acabados, en el orden en que Taller los hace</b></div>
+                                <p class="o_sm_hint">Ejemplo: Taj Mahal pulido que se pide mate busardeado → toca <b>Matizado</b> y luego <b>Busardeado</b>. Si solo se corta, déjalo vacío.</p>
+                                <div class="o_sm_route" t-if="state.steps.length">
+                                    <div class="o_sm_step" t-foreach="state.steps" t-as="s" t-key="s.key">
+                                        <span class="o_sm_step_n" t-esc="s_index + 1"/>
+                                        <div class="o_sm_step_body">
+                                            <b t-esc="s.name"/>
+                                            <div class="o_sm_step_fields">
+                                                <select t-on-change="(ev) => this.onStepProduct(s, ev)">
+                                                    <option value="0">Todos los materiales</option>
+                                                    <t t-foreach="selectedProducts" t-as="p" t-key="p.id">
+                                                        <option t-att-value="p.id" t-att-selected="s.product_id === p.id" t-esc="p.name"/>
+                                                    </t>
+                                                </select>
+                                                <input type="text" placeholder="Indicación (tono, profundidad…)" t-att-value="s.note" t-on-input="(ev) => this.onStepNote(s, ev)"/>
+                                            </div>
+                                        </div>
+                                        <div class="o_sm_step_btns">
+                                            <button type="button" t-att-disabled="s_first" t-on-click="() => this.moveStep(s, -1)" title="Subir"><i class="fa fa-arrow-up" title="Subir"/></button>
+                                            <button type="button" t-att-disabled="s_last" t-on-click="() => this.moveStep(s, 1)" title="Bajar"><i class="fa fa-arrow-down" title="Bajar"/></button>
+                                            <button type="button" class="del" t-on-click="() => this.removeStep(s)" title="Quitar"><i class="fa fa-trash-o" title="Quitar"/></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="o_sm_search o_sm_search_sm">
+                                    <i class="fa fa-search" title=""/>
+                                    <input type="text" placeholder="Filtrar procesos (matizado, busardeado, cepillado…)" t-att-value="state.processQuery" t-on-input="onProcessQuery"/>
+                                </div>
+                                <div class="o_sm_procs">
+                                    <button type="button" class="o_sm_proc" t-foreach="processes" t-as="p" t-key="p.id" t-on-click="() => this.addStep(p)">
+                                        <i class="fa fa-plus" title=""/> <t t-esc="p.name"/>
+                                    </button>
+                                    <span t-if="!processes.length" class="o_sm_hint">Sin procesos con ese nombre.</span>
+                                </div>
+                            </div>
+
+                            <div class="o_sm_block">
+                                <div class="o_sm_block_head"><span class="b">2</span> <b>Corte final</b> <small>(opcional)</small></div>
+                            <p class="o_sm_hint">Elige medidas rápidas o captura una a la medida. Cada toque suma una pieza.</p>
+                            <label class="o_sm_label">Medidas rápidas (cm)</label>
+                            <div class="o_sm_chips">
+                                <button type="button" class="o_sm_chip" t-foreach="state.data.presets" t-as="p" t-key="p_index" t-on-click="() => this.addPreset(p)">
+                                    <t t-esc="p.l"/> × <t t-esc="p.h"/>
+                                </button>
+                            </div>
+                            <label class="o_sm_label mt-3">A la medida</label>
+                            <div class="o_sm_custom">
+                                <input type="number" min="0" step="any" placeholder="Largo" t-att-value="state.custom.length" t-on-input="(ev) => this.onCustom('length', ev)"/>
+                                <span>×</span>
+                                <input type="number" min="0" step="any" placeholder="Alto" t-att-value="state.custom.height" t-on-input="(ev) => this.onCustom('height', ev)"/>
+                                <span>cm ·</span>
+                                <input type="number" min="1" step="1" placeholder="Piezas" t-att-value="state.custom.qty" t-on-input="(ev) => this.onCustom('qty', ev)"/>
+                                <span>pzas</span>
+                                <button type="button" class="btn btn-primary btn-sm" t-on-click="addCustom"><i class="fa fa-plus" title=""/> Agregar</button>
+                            </div>
+
+                            <div t-if="state.sizes.length" class="o_sm_table_wrap mt-3">
+                                <table class="o_sm_table">
+                                    <thead><tr><th class="l">Medida</th><th>Piezas</th><th class="l">Material</th><th class="l">Nota</th><th/></tr></thead>
+                                    <tbody>
+                                        <tr t-foreach="state.sizes" t-as="s" t-key="s.key">
+                                            <td class="l b"><t t-esc="fmtNum(s.length)"/> × <t t-esc="fmtNum(s.height)"/> cm</td>
+                                            <td>
+                                                <div class="o_sm_stepper">
+                                                    <button type="button" t-on-click="() => this.sizeQty(s, -1)" title="Menos">−</button>
+                                                    <b t-esc="s.qty"/>
+                                                    <button type="button" t-on-click="() => this.sizeQty(s, 1)" title="Más">+</button>
+                                                </div>
+                                            </td>
+                                            <td class="l">
+                                                <select t-on-change="(ev) => this.onSizeProduct(s, ev)">
+                                                    <option value="0">Todos los materiales</option>
+                                                    <t t-foreach="selectedProducts" t-as="p" t-key="p.id">
+                                                        <option t-att-value="p.id" t-att-selected="s.product_id === p.id" t-esc="p.name"/>
+                                                    </t>
+                                                </select>
+                                            </td>
+                                            <td class="l"><input type="text" placeholder="Acabado, canto…" t-att-value="s.note" t-on-input="(ev) => this.onSizeNote(s, ev)"/></td>
+                                            <td><button type="button" class="btn btn-link text-danger btn-sm" t-on-click="() => this.removeSize(s)" title="Quitar"><i class="fa fa-trash-o" title="Quitar"/></button></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="o_sm_total" t-if="state.sizes.length"><t t-esc="totalPieces"/> pieza(s) a cortar</div>
+                            </div>
+                            <div class="o_sm_routebar" t-if="routeText"><i class="fa fa-long-arrow-right" title=""/> <span t-esc="routeText"/></div>
+                            <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.sizes"/></t>
+                        </section>
+
+                        <!-- ═══ Revisar ═══ -->
+                        <section t-if="currentStep.key === 'review'" class="o_sm_review">
+                            <div class="o_sm_rev_grid">
+                                <div><span class="k">Cliente</span><span class="v" t-esc="state.partner ? state.partner.name : ''"/></div>
+                                <div><span class="k">Proyecto</span><span class="v" t-esc="projectName or 'Sin proyecto'"/></div>
+                                <div><span class="k">Tipo</span><span class="v" t-esc="state.sampleType === 'cut' ? 'Proceso en taller' : 'Entrega de placas'"/></div>
+                                <div><span class="k">Fecha requerida</span><span class="v" t-esc="fmtIso(state.dateNeeded)"/></div>
+                            </div>
+                            <div class="o_sm_rev_block">
+                                <span class="k">Material a consumir · <t t-esc="fmtQty(totalM2)"/> m²</span>
+                                <ul>
+                                    <li t-foreach="state.selected" t-as="l" t-key="l.lot_id"><b t-esc="l.lot"/> — <t t-esc="l.product"/> · <t t-esc="fmtQty(l.take)"/> <t t-esc="l.uom"/></li>
+                                </ul>
+                            </div>
+                            <div class="o_sm_rev_block" t-if="state.sampleType === 'cut'">
+                                <span class="k">Ruta en taller<t t-if="totalPieces"> · <t t-esc="totalPieces"/> pieza(s)</t></span>
+                                <div class="o_sm_routebar" t-esc="routeText"/>
+                                <ul t-if="state.steps.some((s) => s.note) or state.sizes.some((s) => s.note)" class="mt-2">
+                                    <li t-foreach="state.steps.filter((s) => s.note)" t-as="s" t-key="s.key"><b t-esc="s.name"/>: <t t-esc="s.note"/></li>
+                                    <li t-foreach="state.sizes.filter((s) => s.note)" t-as="s" t-key="s.key"><b>Corte <t t-esc="fmtNum(s.length)"/>×<t t-esc="fmtNum(s.height)"/></b>: <t t-esc="s.note"/></li>
+                                </ul>
+                            </div>
+                            <div class="o_sm_field wide mt-2">
+                                <label>Motivo de la muestra <span class="req">*</span></label>
+                                <textarea rows="3" t-att-class="{ 'o_sm_invalid': state.errors.reason }"
+                                          placeholder="¿Por qué se entrega? Proyecto, volumen esperado, competencia… Es lo que lee el autorizador."
+                                          t-att-value="state.reason" t-on-input="onReason"/>
+                                <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.reason"/></t>
+                            </div>
+                            <div class="o_sm_field wide mt-2">
+                                <label>Indicaciones para Logística / Taller</label>
+                                <textarea rows="2" placeholder="Opcional" t-att-value="state.instructions" t-on-input="onInstructions"/>
+                            </div>
+                            <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.general"/></t>
+                        </section>
+                    </div>
+
+                    <!-- ═══ Navegación ═══ -->
+                    <div class="o_sm_nav">
+                        <button class="btn btn-secondary" t-if="state.step > 1" t-on-click="back"><i class="fa fa-arrow-left" title=""/> Atrás</button>
+                        <span class="grow"/>
+                        <button class="btn btn-primary" t-if="state.step &lt; lastStep" t-on-click="next">Siguiente <i class="fa fa-arrow-right" title=""/></button>
+                        <button class="btn btn-success" t-else="" t-att-disabled="state.submitting" t-on-click="submit">
+                            <i t-if="state.submitting" class="fa fa-circle-o-notch fa-spin" title=""/>
+                            <i t-else="" class="fa fa-paper-plane" title=""/> Enviar a autorización
+                        </button>
+                    </div>
+                </t>
+            </div>
+          </div>
+        </div>
+    </t>
+</templates>

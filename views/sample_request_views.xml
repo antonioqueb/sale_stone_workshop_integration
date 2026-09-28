@@ -1,0 +1,443 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- ═══ SOLICITUD DE MUESTRAS ═══
+         Menú raíz "Muestras": asistente guiado para pedirla, lista con
+         estatus, autorización en el Centro de Actividades, pick ticket /
+         remisión con los formatos de siempre y análisis de consumo. -->
+
+    <!-- ─── Formulario ─── -->
+    <record id="view_som_sample_request_form" model="ir.ui.view">
+        <field name="name">som.sample.request.form</field>
+        <field name="model">som.sample.request</field>
+        <field name="arch" type="xml">
+            <form string="Solicitud de muestras" class="o_som_sample_form">
+                <header>
+                    <field name="can_decide" invisible="1"/>
+                    <field name="can_operate" invisible="1"/>
+                    <field name="sample_type" invisible="1"/>
+                    <button name="action_submit" type="object" string="Enviar a autorización"
+                            class="btn-primary" icon="fa-paper-plane" invisible="state != 'draft'"/>
+                    <button name="action_approve" type="object" string="Autorizar"
+                            class="btn-success" icon="fa-check"
+                            invisible="state != 'to_approve' or not can_decide"/>
+                    <button name="action_open_reject_wizard" type="object" string="Rechazar"
+                            class="btn-danger" icon="fa-times"
+                            invisible="state != 'to_approve' or not can_decide"/>
+                    <button name="action_print_pick_ticket" type="object" string="Imprimir pick ticket"
+                            class="btn-primary" icon="fa-print"
+                            invisible="sample_type != 'cut' or state != 'approved' or pick_ticket_printed"/>
+                    <button name="action_print_pick_ticket" type="object" string="Reimprimir pick ticket"
+                            icon="fa-print"
+                            invisible="sample_type != 'cut' or state not in ('approved', 'in_workshop', 'done') or not pick_ticket_printed"/>
+                    <button name="action_send_to_workshop" type="object" string="Material entregado a taller"
+                            class="btn-primary" icon="fa-truck"
+                            invisible="sample_type != 'cut' or state != 'approved' or not can_operate"/>
+                    <button name="action_finish_workshop" type="object" string="Muestras terminadas"
+                            class="btn-success" icon="fa-flag-checkered"
+                            invisible="sample_type != 'cut' or state != 'in_workshop' or not can_operate"
+                            confirm="Se consumirán los lotes de esta solicitud: salen del inventario y no se genera nada. ¿Continuar?"/>
+                    <button name="action_deliver_remission" type="object" string="Entregar con remisión"
+                            class="btn-success" icon="fa-file-text-o"
+                            invisible="sample_type != 'delivery' or state != 'approved' or not can_operate"
+                            confirm="Se consumirán los lotes de esta solicitud (salen del inventario) y se imprimirá la remisión. ¿Continuar?"/>
+                    <button name="action_print_remission" type="object" string="Reimprimir remisión"
+                            icon="fa-print" invisible="not remission_number"/>
+                    <button name="action_reset_draft" type="object" string="Regresar a borrador"
+                            invisible="state not in ('rejected', 'cancel')"/>
+                    <button name="action_cancel" type="object" string="Cancelar"
+                            invisible="state in ('done', 'cancel', 'rejected')"
+                            confirm="¿Cancelar la solicitud? Sus lotes quedan libres otra vez."/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,to_approve,approved,in_workshop,done"/>
+                </header>
+                <sheet>
+                    <field name="pick_ticket_printed" invisible="1"/>
+                    <field name="company_id" invisible="1"/>
+
+                    <!-- Avisos de estado -->
+                    <div class="o_ssf_notice o_ssf_notice_warn" invisible="state != 'to_approve'">
+                        <i class="fa fa-hourglass-half"/>
+                        <span><b>Esperando autorización.</b> Los autorizadores la tienen en su Centro de Actividades. Sus lotes ya están apartados para esta muestra.</span>
+                    </div>
+                    <div class="o_ssf_notice o_ssf_notice_info" invisible="state != 'approved' or sample_type != 'cut'">
+                        <i class="fa fa-truck"/>
+                        <span><b>Autorizada.</b> Logística imprime el pick ticket y lleva el material a Taller.</span>
+                    </div>
+                    <div class="o_ssf_notice o_ssf_notice_info" invisible="state != 'approved' or sample_type != 'delivery'">
+                        <i class="fa fa-file-text-o"/>
+                        <span><b>Autorizada.</b> Logística la entrega al cliente con remisión.</span>
+                    </div>
+                    <div class="o_ssf_notice o_ssf_notice_info" invisible="state != 'in_workshop'">
+                        <i class="fa fa-cogs"/>
+                        <span><b>En Taller.</b> Al terminar las muestras se consume el material.</span>
+                    </div>
+                    <div class="o_ssf_notice o_ssf_notice_ok" invisible="state != 'done'">
+                        <i class="fa fa-check-circle"/>
+                        <span><b>Entregada.</b> El material se consumió y salió del inventario.</span>
+                    </div>
+                    <div class="o_ssf_notice o_ssf_notice_danger" invisible="state != 'rejected'">
+                        <i class="fa fa-times-circle"/>
+                        <span><b>Rechazada:</b> <field name="rejection_reason" nolabel="1" readonly="1"/></span>
+                    </div>
+                    <div class="o_ssf_notice o_ssf_notice_dark" invisible="state != 'cancel'">
+                        <i class="fa fa-ban"/>
+                        <span><b>Cancelada.</b> Sus lotes quedaron libres.</span>
+                    </div>
+
+                    <!-- Encabezado -->
+                    <div class="o_ssf_hero">
+                        <div class="o_ssf_hero_main">
+                            <div class="o_ssf_kicker">
+                                <i class="fa fa-th-large"/> Solicitud de muestras ·
+                                <span invisible="sample_type != 'cut'">Proceso en taller</span>
+                                <span invisible="sample_type != 'delivery'">Entrega de placas</span>
+                            </div>
+                            <h1 class="o_ssf_title"><field name="name" readonly="1"/></h1>
+                            <div class="o_ssf_meta">
+                                <span class="o_ssf_chip"><i class="fa fa-user"/> <field name="partner_id" readonly="1" options="{'no_open': True}"/></span>
+                                <span class="o_ssf_chip" invisible="not x_project_id"><i class="fa fa-building-o"/> <field name="x_project_id" readonly="1" options="{'no_open': True}"/></span>
+                                <span class="o_ssf_chip"><i class="fa fa-id-badge"/> <field name="user_id" readonly="1" options="{'no_open': True}"/></span>
+                            </div>
+                        </div>
+                        <div class="o_ssf_kpis">
+                            <div class="o_ssf_kpi"><span class="o_ssf_kpi_label">Lotes</span><field name="lot_count" class="o_ssf_kpi_value"/></div>
+                            <div class="o_ssf_kpi"><span class="o_ssf_kpi_label">m²</span><field name="total_m2" class="o_ssf_kpi_value"/></div>
+                            <div class="o_ssf_kpi" invisible="sample_type != 'cut'"><span class="o_ssf_kpi_label">Piezas</span><field name="piece_count" class="o_ssf_kpi_value"/></div>
+                            <div class="o_ssf_kpi"><span class="o_ssf_kpi_label">Fecha requerida</span><field name="date_needed" widget="som_date_cell" readonly="1" class="o_ssf_kpi_value"/></div>
+                        </div>
+                    </div>
+
+                    <div class="o_ssf_grid">
+                        <div class="o_ssf_card">
+                            <div class="o_ssf_card_head">
+                                <span class="o_ssf_icon"><i class="fa fa-user"/></span>
+                                <div><div class="o_ssf_card_title">Cliente y proyecto</div>
+                                    <div class="o_ssf_card_sub">Para quién es la muestra y a dónde va</div></div>
+                            </div>
+                            <group class="o_ssf_group">
+                                <field name="partner_id" readonly="state != 'draft'"/>
+                                <field name="x_project_id" readonly="state != 'draft'"
+                                       domain="['|', ('partner_id', '=', False), ('partner_id', 'child_of', partner_id)]"
+                                       context="{'default_partner_id': partner_id}"/>
+                                <field name="x_architect_id" readonly="state != 'draft'"/>
+                                <field name="user_id" widget="many2one_avatar_user" readonly="state != 'draft'"/>
+                                <field name="sample_type" widget="radio" options="{'horizontal': true}" readonly="state != 'draft'"/>
+                                <field name="date_needed" readonly="state not in ('draft', 'to_approve', 'approved')"/>
+                                <field name="delivery_address" placeholder="Dirección de entrega..." readonly="state == 'done'"/>
+                            </group>
+                        </div>
+                        <div class="o_ssf_card">
+                            <div class="o_ssf_card_head">
+                                <span class="o_ssf_icon"><i class="fa fa-comment-o"/></span>
+                                <div><div class="o_ssf_card_title">Motivo y seguimiento</div>
+                                    <div class="o_ssf_card_sub">Lo que lee el autorizador y la bitácora de la operación</div></div>
+                            </div>
+                            <group class="o_ssf_group">
+                                <field name="reason" placeholder="¿Por qué se entrega esta muestra? Proyecto, volumen esperado, competencia…"
+                                       readonly="state != 'draft'" required="state == 'draft'"/>
+                                <field name="instructions" placeholder="Indicaciones para Logística o Taller"
+                                       readonly="state == 'done'"/>
+                                <field name="decided_by_id" invisible="not decided_by_id"/>
+                                <field name="decided_date" invisible="not decided_date"/>
+                                <field name="workshop_date" invisible="not workshop_date"/>
+                                <field name="done_date" invisible="not done_date"/>
+                                <field name="remission_number" invisible="not remission_number"/>
+                            </group>
+                        </div>
+                    </div>
+
+                    <div class="o_ssf_card o_ssf_card_wide">
+                        <div class="o_ssf_card_head">
+                            <span class="o_ssf_icon"><i class="fa fa-cubes"/></span>
+                            <div><div class="o_ssf_card_title">Material a consumir</div>
+                                <div class="o_ssf_card_sub">Estos lotes salen del inventario al terminar la muestra. No se genera nada.</div></div>
+                        </div>
+                        <field name="line_ids" readonly="state != 'draft'" class="o_ssf_lines">
+                            <list editable="bottom">
+                                <field name="lot_id" options="{'no_create': True}"
+                                       domain="[('product_id.tracking', '!=', 'none')]"/>
+                                <field name="product_id" readonly="1"/>
+                                <field name="width_cm" string="Largo" optional="show"/>
+                                <field name="height_cm" string="Alto" optional="show"/>
+                                <field name="qty_selected" string="Cantidad"/>
+                                <field name="uom_name" string="Unidad"/>
+                                <field name="area_m2" sum="Total"/>
+                                <field name="source_location_id" optional="show" options="{'no_open': True}"/>
+                                <field name="qty_done" optional="hide"/>
+                                <field name="location_note" optional="hide"/>
+                            </list>
+                        </field>
+                    </div>
+
+                    <div class="o_ssf_card o_ssf_card_wide" invisible="sample_type != 'cut'">
+                        <div class="o_ssf_card_head">
+                            <span class="o_ssf_icon"><i class="fa fa-cogs"/></span>
+                            <div><div class="o_ssf_card_title">Ruta en taller</div>
+                                <div class="o_ssf_card_sub">Acabados EN ORDEN antes del corte (p. ej. 1) Matizado 2) Busardeado). Taller marca cada paso al hacerlo.</div></div>
+                        </div>
+                        <div class="o_ssf_route" invisible="not workshop_route">
+                            <i class="fa fa-long-arrow-right"/> <field name="workshop_route" nolabel="1"/>
+                        </div>
+                        <field name="step_ids" class="o_ssf_lines"
+                               readonly="state not in ('draft', 'to_approve', 'approved', 'in_workshop')">
+                            <list editable="bottom" decoration-muted="done">
+                                <field name="sequence" widget="handle"/>
+                                <field name="process_id" options="{'no_create': True, 'no_open': True}"
+                                       readonly="parent.state not in ('draft', 'to_approve')"/>
+                                <field name="product_id" options="{'no_create': True}" placeholder="Todos los materiales"
+                                       readonly="parent.state not in ('draft', 'to_approve')"/>
+                                <field name="note" readonly="parent.state not in ('draft', 'to_approve')"/>
+                                <field name="done" widget="boolean_toggle" readonly="parent.state != 'in_workshop'"/>
+                                <field name="done_by_id" optional="show"/>
+                                <field name="done_date" optional="hide"/>
+                            </list>
+                        </field>
+                    </div>
+
+                    <div class="o_ssf_card o_ssf_card_wide" invisible="sample_type != 'cut'">
+                        <div class="o_ssf_card_head">
+                            <span class="o_ssf_icon"><i class="fa fa-scissors"/></span>
+                            <div><div class="o_ssf_card_title">Corte final</div>
+                                <div class="o_ssf_card_sub">Medidas de las muestras que Taller corta al final de la ruta</div></div>
+                        </div>
+                        <field name="size_ids" readonly="state not in ('draft', 'to_approve', 'approved')" class="o_ssf_lines">
+                            <list editable="bottom">
+                                <field name="length_cm"/>
+                                <field name="height_cm"/>
+                                <field name="qty" sum="Piezas"/>
+                                <field name="product_id" options="{'no_create': True}" placeholder="Todos los materiales"/>
+                                <field name="note"/>
+                            </list>
+                        </field>
+                    </div>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ─── Lista ─── -->
+    <record id="view_som_sample_request_list" model="ir.ui.view">
+        <field name="name">som.sample.request.list</field>
+        <field name="model">som.sample.request</field>
+        <field name="arch" type="xml">
+            <list string="Solicitudes de muestras" class="o_som_sample_list"
+                  decoration-muted="state in ('cancel', 'rejected')">
+                <field name="name" string="Folio"/>
+                <field name="create_date" string="Fecha" widget="som_date_cell"/>
+                <field name="partner_id"/>
+                <field name="x_project_id" optional="show"/>
+                <field name="user_id" widget="many2one_avatar_user"/>
+                <field name="sample_type" widget="badge"
+                       decoration-info="sample_type == 'cut'" decoration-primary="sample_type == 'delivery'"/>
+                <field name="product_names" optional="show"/>
+                <field name="lot_count"/>
+                <field name="total_m2" sum="m²"/>
+                <field name="piece_count" optional="hide"/>
+                <field name="date_needed" widget="som_date_cell" optional="show"/>
+                <field name="state" widget="badge"
+                       decoration-muted="state in ('draft', 'cancel')"
+                       decoration-warning="state == 'to_approve'"
+                       decoration-info="state in ('approved', 'in_workshop')"
+                       decoration-success="state == 'done'"
+                       decoration-danger="state == 'rejected'"/>
+                <field name="company_id" groups="base.group_multi_company" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ─── Búsqueda ─── -->
+    <record id="view_som_sample_request_search" model="ir.ui.view">
+        <field name="name">som.sample.request.search</field>
+        <field name="model">som.sample.request</field>
+        <field name="arch" type="xml">
+            <search string="Muestras">
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="x_project_id"/>
+                <field name="user_id"/>
+                <field name="line_ids" string="Lote" filter_domain="[('line_ids.lot_id.name', 'ilike', self)]"/>
+                <field name="product_names" string="Material"/>
+                <filter name="filter_mine" string="Mis solicitudes"
+                        domain="['|', ('user_id', '=', uid), ('create_uid', '=', uid)]"/>
+                <separator/>
+                <filter name="filter_to_approve" string="Por autorizar" domain="[('state', '=', 'to_approve')]"/>
+                <filter name="filter_to_operate" string="Por atender (Logística / Taller)"
+                        domain="[('state', 'in', ('approved', 'in_workshop'))]"/>
+                <filter name="filter_done" string="Entregadas" domain="[('state', '=', 'done')]"/>
+                <filter name="filter_closed" string="Rechazadas / canceladas" domain="[('state', 'in', ('rejected', 'cancel'))]"/>
+                <separator/>
+                <filter name="filter_cut" string="Corte" domain="[('sample_type', '=', 'cut')]"/>
+                <filter name="filter_delivery" string="Entrega de placas" domain="[('sample_type', '=', 'delivery')]"/>
+                <separator/>
+                <filter name="group_user" string="Vendedor" context="{'group_by': 'user_id'}"/>
+                <filter name="group_partner" string="Cliente" context="{'group_by': 'partner_id'}"/>
+                <filter name="group_project" string="Proyecto" context="{'group_by': 'x_project_id'}"/>
+                <filter name="group_type" string="Tipo" context="{'group_by': 'sample_type'}"/>
+                <filter name="group_state" string="Estatus" context="{'group_by': 'state'}"/>
+                <filter name="group_month" string="Mes" context="{'group_by': 'create_date:month'}"/>
+            </search>
+        </field>
+    </record>
+
+    <!-- ─── Análisis (solicitudes) ─── -->
+    <record id="view_som_sample_request_pivot" model="ir.ui.view">
+        <field name="name">som.sample.request.pivot</field>
+        <field name="model">som.sample.request</field>
+        <field name="arch" type="xml">
+            <pivot string="Muestras" sample="1">
+                <field name="user_id" type="row"/>
+                <field name="sample_type" type="col"/>
+                <field name="total_m2" type="measure"/>
+                <field name="lot_count" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+    <record id="view_som_sample_request_graph" model="ir.ui.view">
+        <field name="name">som.sample.request.graph</field>
+        <field name="model">som.sample.request</field>
+        <field name="arch" type="xml">
+            <graph string="Muestras" type="bar" sample="1">
+                <field name="user_id"/>
+                <field name="total_m2" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <!-- ─── Análisis de consumo (por lote) ─── -->
+    <record id="view_som_sample_request_line_list" model="ir.ui.view">
+        <field name="name">som.sample.request.line.list</field>
+        <field name="model">som.sample.request.line</field>
+        <field name="arch" type="xml">
+            <list string="Consumo en muestras" create="0" edit="0" delete="0">
+                <field name="request_id"/>
+                <field name="partner_id"/>
+                <field name="x_project_id" optional="show"/>
+                <field name="user_id" widget="many2one_avatar_user"/>
+                <field name="sample_type"/>
+                <field name="product_id"/>
+                <field name="lot_id"/>
+                <field name="qty_selected" sum="Total"/>
+                <field name="area_m2" sum="m²"/>
+                <field name="state" widget="badge"/>
+            </list>
+        </field>
+    </record>
+    <record id="view_som_sample_request_line_pivot" model="ir.ui.view">
+        <field name="name">som.sample.request.line.pivot</field>
+        <field name="model">som.sample.request.line</field>
+        <field name="arch" type="xml">
+            <pivot string="Consumo en muestras" sample="1">
+                <field name="user_id" type="row"/>
+                <field name="product_id" type="col"/>
+                <field name="area_m2" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+    <record id="view_som_sample_request_line_graph" model="ir.ui.view">
+        <field name="name">som.sample.request.line.graph</field>
+        <field name="model">som.sample.request.line</field>
+        <field name="arch" type="xml">
+            <graph string="Consumo en muestras" type="bar" sample="1">
+                <field name="partner_id"/>
+                <field name="area_m2" type="measure"/>
+            </graph>
+        </field>
+    </record>
+    <record id="view_som_sample_request_line_search" model="ir.ui.view">
+        <field name="name">som.sample.request.line.search</field>
+        <field name="model">som.sample.request.line</field>
+        <field name="arch" type="xml">
+            <search string="Consumo en muestras">
+                <field name="product_id"/>
+                <field name="lot_id"/>
+                <field name="partner_id"/>
+                <field name="user_id"/>
+                <field name="x_project_id"/>
+                <filter name="filter_consumed" string="Consumidas" domain="[('state', '=', 'done')]"/>
+                <filter name="filter_open" string="Abiertas" domain="[('state', 'in', ('to_approve', 'approved', 'in_workshop'))]"/>
+                <separator/>
+                <filter name="group_user" string="Vendedor" context="{'group_by': 'user_id'}"/>
+                <filter name="group_partner" string="Cliente" context="{'group_by': 'partner_id'}"/>
+                <filter name="group_product" string="Material" context="{'group_by': 'product_id'}"/>
+                <filter name="group_project" string="Proyecto" context="{'group_by': 'x_project_id'}"/>
+                <filter name="group_month" string="Mes" context="{'group_by': 'create_date:month'}"/>
+            </search>
+        </field>
+    </record>
+
+    <!-- ─── Rechazo ─── -->
+    <record id="view_som_sample_reject_wizard_form" model="ir.ui.view">
+        <field name="name">som.sample.reject.wizard.form</field>
+        <field name="model">som.sample.reject.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Rechazar muestra">
+                <field name="request_id" invisible="1"/>
+                <label for="reason" string="Motivo del rechazo (lo recibe el vendedor)"/>
+                <field name="reason" required="1" nolabel="1" placeholder="Explica por qué no se autoriza…"/>
+                <footer>
+                    <button name="action_confirm" type="object" string="Rechazar" class="btn-danger"/>
+                    <button string="Cancelar" special="cancel" class="btn-secondary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- ─── Acciones ─── -->
+    <record id="action_som_sample_request" model="ir.actions.act_window">
+        <field name="name">Solicitudes de muestras</field>
+        <field name="res_model">som.sample.request</field>
+        <field name="view_mode">list,form,pivot,graph</field>
+        <field name="view_id" ref="view_som_sample_request_list"/>
+        <field name="search_view_id" ref="view_som_sample_request_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Aún no hay solicitudes de muestras</p>
+            <p>Usa <b>Nueva solicitud</b> para pedir un corte de muestras o la entrega de placas a un cliente.</p>
+        </field>
+    </record>
+
+    <record id="action_som_sample_request_open" model="ir.actions.server">
+        <field name="name">Solicitudes de muestras</field>
+        <field name="model_id" ref="model_som_sample_request"/>
+        <field name="state">code</field>
+        <field name="code">action = model._som_open_action()</field>
+    </record>
+
+    <record id="action_som_sample_request_to_approve" model="ir.actions.act_window">
+        <field name="name">Muestras por autorizar</field>
+        <field name="res_model">som.sample.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_som_sample_request_list"/>
+        <field name="search_view_id" ref="view_som_sample_request_search"/>
+        <field name="context">{'search_default_filter_to_approve': 1}</field>
+    </record>
+
+    <record id="action_som_sample_analysis" model="ir.actions.act_window">
+        <field name="name">Análisis de muestras</field>
+        <field name="res_model">som.sample.request.line</field>
+        <field name="view_mode">pivot,graph,list</field>
+        <field name="search_view_id" ref="view_som_sample_request_line_search"/>
+        <field name="context">{'search_default_filter_consumed': 1}</field>
+    </record>
+
+    <record id="action_som_sample_new" model="ir.actions.client">
+        <field name="name">Nueva solicitud de muestras</field>
+        <field name="tag">som_sample_request</field>
+        <field name="target">current</field>
+    </record>
+
+    <!-- ─── Menú raíz ─── -->
+    <menuitem id="menu_som_samples_root" name="Muestras" sequence="52"
+              web_icon="sale_stone_workshop_integration,static/description/icon_samples.svg"
+              groups="sales_team.group_sale_salesman,inventory_shopping_cart.group_price_authorizer,sale_delivery_wizard.group_delivery_user,stone_workshop.group_workshop_manager"/>
+    <menuitem id="menu_som_samples_new" name="Nueva solicitud" parent="menu_som_samples_root"
+              action="action_som_sample_new" sequence="10"
+              groups="sales_team.group_sale_salesman,inventory_shopping_cart.group_price_authorizer"/>
+    <menuitem id="menu_som_samples_list" name="Solicitudes" parent="menu_som_samples_root"
+              action="action_som_sample_request_open" sequence="20"/>
+    <menuitem id="menu_som_samples_to_approve" name="Por autorizar" parent="menu_som_samples_root"
+              action="action_som_sample_request_to_approve" sequence="30"
+              groups="inventory_shopping_cart.group_price_authorizer"/>
+    <menuitem id="menu_som_samples_analysis" name="Análisis" parent="menu_som_samples_root"
+              action="action_som_sample_analysis" sequence="40"
+              groups="inventory_shopping_cart.group_price_authorizer,sales_team.group_sale_manager"/>
+</odoo>

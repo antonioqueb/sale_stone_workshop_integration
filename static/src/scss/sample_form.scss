@@ -1,0 +1,149 @@
+// ═══ Formulario de la solicitud de muestras ═══
+// Tarjetas azules, misma línea que la orden de reserva. Todo bajo
+// .o_som_sample_form (clase del <form>): no toca otros formularios.
+// Sin min()/max() de unidades mixtas (tumban el bundle).
+$ss-blue: #0b57d0;
+$ss-blue-dark: #083b8f;
+$ss-blue-soft: #eaf1fe;
+$ss-blue-line: #cfe0fb;
+$ss-ink: #0f172a;
+$ss-mut: #64748b;
+$ss-line: #e2e8f0;
+$ss-bg: #f3f6fb;
+
+.o_form_view.o_som_sample_form {
+    .o_form_sheet_bg { background: $ss-bg; }
+    .o_form_sheet {
+        background: transparent; border: 0; box-shadow: none;
+        max-width: 1280px; margin: 0 auto; padding: 18px 20px 28px;
+    }
+    .o_form_statusbar {
+        background: #fff; border-bottom: 1px solid $ss-line; padding: 8px 16px;
+        .o_statusbar_buttons .btn { border-radius: 10px; font-weight: 600; }
+        .o_statusbar_status .o_arrow_button_current { background: $ss-blue !important; color: #fff !important; }
+    }
+
+    // ─── Avisos ───
+    .o_ssf_notice {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 11px 16px; margin-bottom: 12px;
+        border-radius: 12px; border: 1px solid; font-size: 13.5px;
+        > .fa { font-size: 16px; }
+        .o_field_widget { display: inline; }
+        &.o_ssf_notice_info { background: $ss-blue-soft; border-color: $ss-blue-line; color: $ss-blue-dark; }
+        &.o_ssf_notice_warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+        &.o_ssf_notice_ok { background: #e6f5ec; border-color: #b7e4c7; color: #0e7a4f; }
+        &.o_ssf_notice_danger { background: #fef2f2; border-color: #fecaca; color: #b42318; }
+        &.o_ssf_notice_dark { background: #1e293b; border-color: #0f172a; color: #fff; }
+    }
+
+    // ─── Encabezado ───
+    .o_ssf_hero {
+        display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 18px; align-items: stretch;
+        padding: 22px 24px; margin-bottom: 14px; border-radius: 18px; color: #fff;
+        background: linear-gradient(135deg, $ss-blue 0%, $ss-blue-dark 100%);
+        box-shadow: 0 10px 28px rgba(11, 87, 208, 0.25);
+    }
+    .o_ssf_hero_main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .o_ssf_kicker {
+        font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.85;
+        .fa { margin-right: 4px; }
+    }
+    .o_ssf_title {
+        color: #fff; font-size: 32px; font-weight: 800; margin: 0; letter-spacing: -0.01em;
+        .o_field_widget, span { color: #fff; font-size: inherit; }
+    }
+    .o_ssf_meta { display: flex; flex-wrap: wrap; gap: 8px; }
+    .o_ssf_chip {
+        display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+        background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-weight: 600;
+        .fa { opacity: 0.85; }
+        .o_field_widget, span, a { color: #fff !important; display: inline; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis; }
+    }
+    .o_ssf_kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .o_ssf_kpi {
+        display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0;
+        background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 14px; padding: 12px 14px;
+    }
+    .o_ssf_kpi_label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
+    .o_ssf_kpi_value {
+        display: block; color: #fff; font-size: 22px; font-weight: 800; line-height: 1.2;
+        font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        span { color: #fff; }
+    }
+
+    // ─── Tarjetas ───
+    .o_ssf_grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+    .o_ssf_card {
+        background: #fff; border: 1px solid $ss-line; border-top: 3px solid $ss-blue; border-radius: 16px;
+        padding: 16px 20px 10px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); min-width: 0;
+        &.o_ssf_card_wide { margin-bottom: 14px; padding-bottom: 16px; }
+    }
+    .o_ssf_card_head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .o_ssf_icon {
+        width: 36px; height: 36px; border-radius: 10px; display: inline-grid; place-items: center; flex: 0 0 auto;
+        background: $ss-blue-soft; color: $ss-blue; font-size: 16px;
+    }
+    .o_ssf_card_title { font-size: 16px; font-weight: 800; line-height: 1.2; color: $ss-ink; }
+    .o_ssf_card_sub { font-size: 12.5px; color: $ss-mut; }
+    .o_ssf_group {
+        margin: 0;
+        .o_wrap_label .o_form_label, .o_cell .o_form_label {
+            font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: $ss-mut;
+        }
+        .o_field_widget { font-size: 14px; color: $ss-ink; }
+        .o_wrap_input .o_field_widget { width: 100%; }
+        .o_cell { padding-top: 4px; padding-bottom: 4px; }
+        textarea { min-height: 60px; }
+    }
+
+    // ─── Tablas embebidas ───
+    .o_ssf_lines {
+        display: block; width: 100%;
+        .o_list_renderer { border: 1px solid $ss-line; border-radius: 12px; }
+        .o_list_table {
+            margin: 0;
+            thead th {
+                background: #f5f8fe; color: $ss-blue-dark; font-size: 11.5px; font-weight: 700;
+                text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid $ss-blue-line !important;
+            }
+            tbody td { font-variant-numeric: tabular-nums; vertical-align: middle; }
+            tbody td[name="lot_id"] { font-weight: 700; }
+            tfoot td { background: #f5f8fe; font-weight: 700; }
+        }
+        .o_field_x2many_list_row_add a { color: $ss-blue; font-weight: 700; }
+    }
+
+    // ─── Responsivo ───
+    @media (max-width: 1199.98px) {
+        .o_ssf_hero { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 991.98px) {
+        .o_form_sheet { min-width: 0; }
+        .o_ssf_grid { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 575.98px) {
+        .o_form_sheet { padding: 10px 8px 20px; min-width: 0; max-width: 100%; }
+        .o_ssf_hero { padding: 16px; border-radius: 14px; }
+        .o_ssf_title { font-size: 24px; }
+        .o_ssf_kpi_value { font-size: 18px; }
+        .o_ssf_card { padding: 14px 12px; }
+    }
+}
+
+// Ruta en taller en una línea: "1) MATIZADO → 2) BUSARDEADO → 3) Corte…".
+.o_form_view.o_som_sample_form .o_ssf_route {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    background: #eaf1fe;
+    border: 1px solid #cfe0fb;
+    color: #083b8f;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    font-weight: 700;
+    .o_field_widget { display: inline; white-space: pre-line; }
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 70">
+  <defs>
+    <linearGradient id="sbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b57d0"/>
+      <stop offset="1" stop-color="#083b8f"/>
+    </linearGradient>
+  </defs>
+  <!-- Fondo app -->
+  <rect width="70" height="70" rx="14" fill="url(#sbg)"/>
+  <!-- Muestras de piedra: tres cuadros escalonados con veta -->
+  <rect x="12" y="30" width="20" height="20" rx="3" fill="#ffffff" opacity="0.6"/>
+  <rect x="22" y="22" width="22" height="22" rx="3" fill="#ffffff" opacity="0.8"/>
+  <rect x="33" y="13" width="25" height="25" rx="3.5" fill="#ffffff"/>
+  <path d="M35 30c5-2 8-8 14-9s7-4 8-6" fill="none" stroke="#9db6e6" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M36 35c6-1 9-5 15-5" fill="none" stroke="#c7d6f2" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- Tijera / corte -->
+  <circle cx="47" cy="53" r="8.5" fill="#25d366" stroke="#ffffff" stroke-width="2.5"/>
+  <path d="M43 53.5l3 3 5.5-6.5" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

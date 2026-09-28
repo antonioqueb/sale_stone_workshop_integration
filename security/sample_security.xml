@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Solicitudes de muestras: el vendedor ve las suyas; autorizadores,
+         Logística, Taller y gerentes de ventas ven todas. Las reglas de
+         grupo se suman (OR): quien tenga cualquiera de esos grupos ve todo. -->
+    <data noupdate="0">
+        <record id="rule_som_sample_request_company" model="ir.rule">
+            <field name="name">Muestras: multiempresa</field>
+            <field name="model_id" ref="model_som_sample_request"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="global" eval="True"/>
+        </record>
+        <record id="rule_som_sample_request_own" model="ir.rule">
+            <field name="name">Muestras: vendedor ve las suyas</field>
+            <field name="model_id" ref="model_som_sample_request"/>
+            <field name="domain_force">['|', ('user_id', '=', user.id), ('create_uid', '=', user.id)]</field>
+            <field name="groups" eval="[(4, ref('sales_team.group_sale_salesman'))]"/>
+        </record>
+        <record id="rule_som_sample_request_all" model="ir.rule">
+            <field name="name">Muestras: ven todas</field>
+            <field name="model_id" ref="model_som_sample_request"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="groups" eval="[
+                (4, ref('sales_team.group_sale_salesman_all_leads')),
+                (4, ref('inventory_shopping_cart.group_price_authorizer')),
+                (4, ref('sale_delivery_wizard.group_delivery_user')),
+                (4, ref('stone_workshop.group_workshop_manager'))]"/>
+        </record>
+
+        <record id="rule_som_sample_request_line_company" model="ir.rule">
+            <field name="name">Muestras (lotes): multiempresa</field>
+            <field name="model_id" ref="model_som_sample_request_line"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="global" eval="True"/>
+        </record>
+        <record id="rule_som_sample_request_line_own" model="ir.rule">
+            <field name="name">Muestras (lotes): vendedor ve las suyas</field>
+            <field name="model_id" ref="model_som_sample_request_line"/>
+            <field name="domain_force">['|', ('request_id.user_id', '=', user.id), ('request_id.create_uid', '=', user.id)]</field>
+            <field name="groups" eval="[(4, ref('sales_team.group_sale_salesman'))]"/>
+        </record>
+        <record id="rule_som_sample_request_line_all" model="ir.rule">
+            <field name="name">Muestras (lotes): ven todas</field>
+            <field name="model_id" ref="model_som_sample_request_line"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+            <field name="groups" eval="[
+                (4, ref('sales_team.group_sale_salesman_all_leads')),
+                (4, ref('inventory_shopping_cart.group_price_authorizer')),
+                (4, ref('sale_delivery_wizard.group_delivery_user')),
+                (4, ref('stone_workshop.group_workshop_manager'))]"/>
+        </record>
+    </data>
+
+    <data noupdate="1">
+        <record id="seq_som_sample_request" model="ir.sequence">
+            <field name="name">Solicitud de muestras</field>
+            <field name="code">som.sample.request</field>
+            <field name="prefix">MUE/%(year)s/</field>
+            <field name="padding">4</field>
+        </record>
+        <record id="seq_som_sample_remission" model="ir.sequence">
+            <field name="name">Remisión de muestras</field>
+            <field name="code">som.sample.remission</field>
+            <field name="prefix">REM-MUE/%(year)s/</field>
+            <field name="padding">4</field>
+        </record>
+    </data>
+</odoo>

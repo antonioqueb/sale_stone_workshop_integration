@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Pick ticket y remisión de la SOLICITUD DE MUESTRAS: son las MISMAS
+         plantillas de sale_delivery_wizard (no se copia ni se cambia nada).
+         som.sample.request expone los campos que esas plantillas leen de
+         sale.delivery.document y de sus líneas. -->
+    <template id="report_sample_pick_ticket">
+        <t t-call="sale_delivery_wizard.report_pick_ticket"/>
+    </template>
+
+    <template id="report_sample_remission">
+        <t t-call="sale_delivery_wizard.report_remission"/>
+    </template>
+
+    <record id="action_report_sample_pick_ticket" model="ir.actions.report">
+        <field name="name">Pick Ticket de muestra</field>
+        <field name="model">som.sample.request</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">sale_stone_workshop_integration.report_sample_pick_ticket</field>
+        <field name="report_file">sale_stone_workshop_integration.report_sample_pick_ticket</field>
+        <field name="print_report_name">'Pick Ticket - %s' % object.name</field>
+    </record>
+
+    <record id="action_report_sample_remission" model="ir.actions.report">
+        <field name="name">Remisión de muestra</field>
+        <field name="model">som.sample.request</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">sale_stone_workshop_integration.report_sample_remission</field>
+        <field name="report_file">sale_stone_workshop_integration.report_sample_remission</field>
+        <field name="print_report_name">'Remisión - %s' % (object.remission_number or object.name)</field>
+    </record>
+</odoo>

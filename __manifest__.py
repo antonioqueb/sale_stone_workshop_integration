@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Sale Stone Workshop Integration',
-    'version': '19.0.8.9.0',
+    'version': '19.0.9.0.0',
     'category': 'Sales/Manufacturing',
     'summary': 'Integra venta, selección de placas, taller y entregas para transformar producto base en producto final',
     'description': """
@@ -32,9 +32,13 @@
     'data': [
         'security/ir.model.access.csv',
         'security/multi_company_rules.xml',
+        'security/sample_security.xml',
         'views/product_views.xml',
         'views/sale_order_views.xml',
         'views/workshop_order_views.xml',
+        # Solicitud de muestras (menú raíz Muestras, 27 sep 2026).
+        'report/sample_reports.xml',
+        'views/sample_request_views.xml',
     ],
     'assets': {
         'web.assets_backend': [
@@ -55,6 +59,11 @@
             'sale_stone_workshop_integration/static/src/components/outbound_workshop/outbound_workshop.js',
             'sale_stone_workshop_integration/static/src/components/outbound_workshop/outbound_workshop.xml',
             'sale_stone_workshop_integration/static/src/components/outbound_workshop/outbound_workshop.scss',
+            # Solicitud de muestras: asistente guiado y formulario.
+            'sale_stone_workshop_integration/static/src/components/sample_request/sample_request.scss',
+            'sale_stone_workshop_integration/static/src/components/sample_request/sample_request.xml',
+            'sale_stone_workshop_integration/static/src/components/sample_request/sample_request.js',
+            'sale_stone_workshop_integration/static/src/scss/sample_form.scss',
         ],
     },
     'installable': True,

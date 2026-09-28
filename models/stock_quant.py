@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from odoo import api, models
 
+from .sample_request import SAMPLE_OPEN_STATES
+
 ACTIVE_WORKSHOP_STATES = (
     'in_workshop',
 )
@@ -62,5 +64,18 @@ class StockQuant(models.Model):
             ('sale_order_id.state', 'in', ('sale', 'done')),
         ])
         committed_ids.update(selections.mapped('lot_id').ids)
+
+        # Solicitudes de muestra abiertas (por autorizar, autorizadas o en
+        # taller): sus lotes se van a consumir. som_sample_exclude_id = la
+        # propia solicitud al validarse/consumirse (no se bloquea sola).
+        sample_domain = [
+            ('product_id', '=', int(product_id)),
+            ('state', 'in', SAMPLE_OPEN_STATES),
+        ]
+        exclude_id = self.env.context.get('som_sample_exclude_id')
+        if exclude_id:
+            sample_domain.append(('request_id', '!=', int(exclude_id)))
+        sample_lines = self.env['som.sample.request.line'].sudo().search(sample_domain)
+        committed_ids.update(sample_lines.mapped('lot_id').ids)
 
         return list(committed_ids)
