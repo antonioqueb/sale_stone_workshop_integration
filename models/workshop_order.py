@@ -767,6 +767,10 @@ class WorkshopOrder(models.Model):
                 order._sale_workshop_cancel_input_reservation(reset_lines=True)
                 continue
 
+            # Nunca reservar más placa de la que existe (selección hecha en
+            # tránsito con m² del packing list mayores a lo recibido).
+            order._sale_workshop_clamp_inputs_to_stock(input_lines)
+
             order._sale_workshop_cleanup_stale_reservations(input_lines=input_lines)
             order._sale_workshop_cancel_input_reservation(reset_lines=False)
             order._sale_workshop_create_reservation_picking(input_lines)
@@ -887,6 +891,53 @@ class WorkshopOrder(models.Model):
             'free_qty': total_qty - reserved_qty,
             'quant_count': len(quants),
         }
+
+    def _sale_workshop_clamp_inputs_to_stock(self, input_lines=None):
+        """Ajusta a la existencia REAL las entradas que piden más de lo que
+        hay del lote.
+
+        Caso V/039 / T-TALLER/2026/0012 (28 sep 2026): las placas S86 se
+        seleccionaron en tránsito con los m² del packing list (5.18) y se
+        recibieron físicamente más chicas (4.99). La selección y la entrada
+        conservaban 5.18, la reserva forzaba 5.18 sobre un quant de 4.99 y
+        la OT no se podía confirmar. No se puede consumir más placa de la
+        que existe: solo se baja (jamás se sube) y solo sin consumir.
+        Devuelve las entradas ajustadas."""
+        self.ensure_one()
+        precision = self.env['decimal.precision'].precision_get('Product Unit of Measure') or 4
+        lines = input_lines if input_lines is not None else self.input_line_ids
+        lines = lines.filtered(
+            lambda l: l.state != 'cancelled' and not l.is_consumed
+            and l.product_id and l.lot_id and (l.qty_in or 0.0) > 0.0)
+        adjusted = self.env['workshop.input.line']
+        notes = []
+        for line in lines:
+            real = self._sale_workshop_quant_qty_for_lot(
+                line.product_id, line.lot_id, location=self.location_src_id,
+            ).get('total_qty') or 0.0
+            # Sin existencia interna (aún en tránsito / ya salió) no se toca:
+            # eso lo resuelve la reserva o el aviso de disponibilidad.
+            if float_compare(real, 0.0, precision_digits=precision) <= 0:
+                continue
+            if float_compare(line.qty_in, real, precision_digits=precision) <= 0:
+                continue
+            old = line.qty_in
+            vals = {'qty_in': real}
+            if self._product_uom_is_area(line.product_id):
+                vals['area_sqm'] = real
+            line.with_context(skip_sale_workshop_reservation=True).write(vals)
+            line.sale_workshop_input_selection_ids.filtered(
+                lambda s: s.state != 'cancelled'
+                and float_compare(s.qty_in or 0.0, real, precision_digits=precision) > 0
+            ).write(dict(vals))
+            adjusted |= line
+            notes.append('%s: %s → %s' % (line.lot_id.name, round(old, 4), round(real, 4)))
+        if notes:
+            self.message_post(body=_(
+                'Placas ajustadas a su existencia real (se recibieron más chicas de lo '
+                'seleccionado): %s.'
+            ) % ', '.join(notes))
+        return adjusted
 
     def _sale_workshop_effective_available_qty_for_input_line(self, input_line):
         self.ensure_one()
@@ -1142,6 +1193,18 @@ class WorkshopOrder(models.Model):
 
             if not order.sale_order_id or not picking or picking.state in ('cancel', 'done') or not pending_inputs:
                 continue
+
+            # Reservas hechas antes del ajuste (placas que se recibieron más
+            # chicas): se baja la entrada a lo real y se rehace la reserva
+            # con esas cantidades antes de consumir.
+            if order._sale_workshop_clamp_inputs_to_stock(pending_inputs):
+                order._sale_workshop_refresh_input_reservation()
+                picking = order.sale_workshop_reservation_picking_id
+                pending_inputs = order._sale_workshop_input_lines_to_reserve()
+                if not picking or picking.state in ('cancel', 'done'):
+                    raise UserError(_(
+                        'No se pudo rehacer la reserva de %s tras ajustar las placas a su '
+                        'existencia real. Intenta de nuevo.') % order.name)
 
             if order.state != 'draft':
                 raise UserError(_('Solo puedes confirmar al taller órdenes en borrador.'))
