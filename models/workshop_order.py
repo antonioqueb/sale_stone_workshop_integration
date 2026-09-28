@@ -1113,18 +1113,20 @@ class WorkshopOrder(models.Model):
         a `in_workshop`) replica al padre.
         """
         # Candado de cadena: un paso encadenado no puede arrancar hasta que el
-        # anterior declare su resultado — su material ES ese resultado.
+        # anterior le entregue material — su material ES ese resultado. Basta
+        # una entrega parcial (28 sep 2026): en órdenes grandes el corte
+        # arranca con lo primero que sale de acabado, sin esperar el total.
         for order in self:
             if order.state != 'draft':
                 continue
             prev = order.stone_workshop_chain_prev_order_id
-            if prev and prev.state != 'done':
+            if prev and not prev._stone_workshop_chain_has_delivered():
                 state_labels = dict(prev._fields['state'].selection)
                 raise UserError(_(
                     'No puedes enviar %(order)s a taller: es el paso %(seq)s de una '
-                    'cadena y el paso anterior %(prev)s (%(state)s) aún no declara su '
-                    'resultado. Sus entradas serán exactamente el material que ese '
-                    'paso produzca.'
+                    'cadena y el paso anterior %(prev)s (%(state)s) todavía no entrega '
+                    'material (ni resultado ni entrega parcial). Sus entradas serán '
+                    'exactamente el material que ese paso produzca.'
                 ) % {
                     'order': order.name,
                     'seq': order.stone_workshop_chain_sequence or 2,
@@ -1237,6 +1239,17 @@ class WorkshopOrder(models.Model):
                 })
 
     def action_declare_result(self):
+        # Paso encadenado cuyo anterior sigue en taller: todavía le va a
+        # llegar material. Cerrarlo dejaría esas entregas sin a dónde ir.
+        for order in self:
+            prev = order.stone_workshop_chain_prev_order_id
+            if order.state == 'in_workshop' and prev and prev.state == 'in_workshop':
+                raise UserError(_(
+                    'No puedes cerrar %(order)s: el paso anterior %(prev)s sigue en taller '
+                    'y todavía le entregará material. Usa "Declarar parcial" para entregar '
+                    'lo que ya está listo y declara el resultado cuando %(prev)s termine.'
+                ) % {'order': order.name, 'prev': prev.name})
+
         # La validación base del picking de entrada de salidas dispara
         # _trigger_assign(), que re-reserva automáticamente movimientos de
         # entregas pendientes del mismo producto. Esa reasignación automática
@@ -1450,6 +1463,21 @@ class WorkshopOrder(models.Model):
                 and (o.qty_out or 0.0) > 0.0
         )
 
+    def _workshop_expects_more_input(self):
+        """Paso de cadena que arranca mientras el anterior sigue en taller:
+        le seguirán llegando entregas parciales."""
+        self.ensure_one()
+        prev = self.stone_workshop_chain_prev_order_id
+        return bool(prev and prev.state == 'in_workshop') or super()._workshop_expects_more_input()
+
+    def _stone_workshop_chain_has_delivered(self):
+        """¿Este paso ya entregó material al siguiente? Terminado, o en taller
+        con al menos una entrega parcial de lotes útiles."""
+        self.ensure_one()
+        if self.state == 'done':
+            return True
+        return self.state == 'in_workshop' and bool(self._stone_workshop_chain_produced_outputs())
+
     def _stone_workshop_chain_allowed_lots(self):
         """Lotes admisibles como entrada de esta OT encadenada.
 
@@ -1481,8 +1509,11 @@ class WorkshopOrder(models.Model):
         for order in self:
             nxt = order.stone_workshop_chain_next_order_id
 
-            if not nxt or nxt.state != 'draft':
+            # También en taller: con entregas parciales el siguiente paso ya
+            # arrancó con lo primero y cada parcial nuevo le llega en vivo.
+            if not nxt or nxt.state not in ('draft', 'in_workshop'):
                 continue
+            nxt_running = nxt.state == 'in_workshop'
 
             if not nxt.input_product_id:
                 continue
@@ -1571,9 +1602,26 @@ class WorkshopOrder(models.Model):
                     'reserved_origin',
                     nxt.sale_order_id.name if nxt.sale_order_id else (order.name or ''),
                 )
+                # Paso ya en taller: sin traslado de reserva (Logística ya no
+                # interviene, el material sigue en piso); se consume directo.
                 WorkshopInput.with_context(
                     stone_workshop_chain_feeding=True,
+                    skip_sale_workshop_reservation=nxt_running,
                 ).create(vals)
+
+            if nxt_running:
+                consumed = nxt.with_context(
+                    **nxt._sale_workshop_stock_context()
+                )._consume_pending_inputs()
+                nxt._sale_workshop_sync_selection_states()
+                nxt._stone_workshop_auto_ticket_chain_stages()
+                if consumed:
+                    nxt.message_post(body=_(
+                        'Material de la entrega parcial de %(prev)s enviado a taller: %(lots)s.'
+                    ) % {
+                        'prev': order.name,
+                        'lots': ', '.join(consumed.mapped('lot_id.name')),
+                    })
 
             nxt.message_post(
                 body=_(
@@ -1804,7 +1852,9 @@ class WorkshopInputLine(models.Model):
 
         state_labels = dict(prev._fields['state'].selection)
 
-        if prev.state != 'done':
+        # Con entregas parciales del paso anterior ya hay lotes admisibles;
+        # abajo se valida que el lote sea uno de ellos.
+        if not prev._stone_workshop_chain_has_delivered():
             raise UserError(_(
                 'La orden %(order)s es el paso %(seq)s de una cadena de procesos: sus '
                 'entradas serán EXACTAMENTE el material que produzca el paso anterior '
