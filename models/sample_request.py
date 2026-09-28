@@ -23,7 +23,6 @@ Mientras la solicitud está abierta sus lotes cuentan como COMPROMETIDOS
 (stock.quant._get_committed_lot_ids): nadie los vende, aparta ni da de baja.
 """
 import logging
-from collections import defaultdict
 
 from markupsafe import Markup
 
@@ -674,54 +673,24 @@ class SomSampleRequest(models.Model):
         }
 
     @api.model
-    def sample_search_lots(self, query='', exclude_ids=None, limit=40):
-        """Lotes LIBRES para muestra: existencias internas sin reserva, sin
-        hold y no comprometidos (venta, apartado, taller u otra muestra)."""
-        query = (query or '').strip()
-        exclude_ids = set(exclude_ids or [])
-        domain = [
-            ('location_id.usage', '=', 'internal'),
-            ('quantity', '>', 0),
-            ('lot_id', '!=', False),
-            ('company_id', '=', self.env.company.id),
-            ('reserved_quantity', '<=', 0),
-        ]
-        if not query and 'x_ancho' in self.env['stock.lot']._fields:
-            # Sin búsqueda: solo placas (lotes con medidas), las más recientes.
-            domain.append(('lot_id.x_ancho', '>', 0))
-        if query:
-            domain += ['|', '|', '|',
-                       ('lot_id.name', 'ilike', query),
-                       ('product_id.name', 'ilike', query),
-                       ('product_id.default_code', 'ilike', query),
-                       ('lot_id.x_bloque', 'ilike', query)] \
-                if 'x_bloque' in self.env['stock.lot']._fields else \
-                ['|', '|', ('lot_id.name', 'ilike', query), ('product_id.name', 'ilike', query),
-                 ('product_id.default_code', 'ilike', query)]
+    def sample_lot_info(self, lot_ids, breakdown=None):
+        """Datos de las placas elegidas en el selector de venta (mismo popup
+        de sale_stone_selection). `breakdown` = cantidad capturada para
+        formato/pieza; sin ella, la placa completa (su existencia interna)."""
+        breakdown = breakdown or {}
         Quant = self.env['stock.quant'].sudo()
-        quants = Quant.search(domain, limit=400, order='in_date desc, id desc' if not query else 'product_id, lot_id')
-        by_lot = defaultdict(lambda: self.env['stock.quant'].sudo())
-        for q in quants:
-            if getattr(q, 'x_tiene_hold', False):
-                by_lot[q.lot_id.id] = None
-            elif by_lot.get(q.lot_id.id, True) is not None:
-                by_lot[q.lot_id.id] |= q
-        committed = {}
         out = []
-        for lot_id, qs in by_lot.items():
-            if qs is None or lot_id in exclude_ids or not qs:
-                continue
-            lot = qs[0].lot_id
-            pid = lot.product_id.id
-            if pid not in committed:
-                committed[pid] = set(Quant._get_committed_lot_ids(pid))
-            if lot.id in committed[pid]:
-                continue
-            qty = sum(qs.mapped('quantity'))
-            loc = qs.sorted(lambda q: -q.quantity)[0].location_id
-            out.append(self._som_lot_payload(lot, qty, loc))
-            if len(out) >= limit:
-                break
+        for lot in self.env['stock.lot'].browse([int(x) for x in lot_ids or []]).exists():
+            quants = Quant.search([
+                ('lot_id', '=', lot.id), ('location_id.usage', '=', 'internal'),
+                ('quantity', '>', 0), ('company_id', '=', self.env.company.id)])
+            qty = sum(quants.mapped('quantity'))
+            loc = quants.sorted(lambda q: -q.quantity)[:1].location_id
+            payload = self._som_lot_payload(lot, qty, loc)
+            raw = breakdown.get(str(lot.id), breakdown.get(lot.id))
+            take = float(raw) if raw not in (None, '', False) else qty
+            payload.update({'take': take, 'partial': take < qty - 1e-4})
+            out.append(payload)
         return out
 
     @api.model
@@ -820,8 +789,8 @@ class SomSampleRequestLine(models.Model):
     qty_selected = fields.Float('Cantidad', digits=(16, 4), required=True)
     qty_done = fields.Float('Consumido', digits=(16, 4), readonly=True, copy=False)
     area_m2 = fields.Float('m²', compute='_compute_area', store=True, digits=(16, 2))
-    width_cm = fields.Float('Largo', compute='_compute_dims')
-    height_cm = fields.Float('Alto', compute='_compute_dims')
+    width_cm = fields.Float('Largo (m)', compute='_compute_dims')
+    height_cm = fields.Float('Alto (m)', compute='_compute_dims')
     source_location_id = fields.Many2one('stock.location', 'Ubicación', compute='_compute_source_location')
     location_note = fields.Char('Consumido desde', readonly=True, copy=False)
     # Las plantillas lo consultan (máscara comercial de la venta): siempre vacío.
@@ -849,7 +818,8 @@ class SomSampleRequestLine(models.Model):
             else:
                 w = getattr(line.lot_id, 'x_ancho', 0.0) or 0.0
                 h = getattr(line.lot_id, 'x_alto', 0.0) or 0.0
-                line.area_m2 = (w * h / 10000.0) if (w and h) else 0.0
+                # x_ancho / x_alto vienen en METROS.
+                line.area_m2 = (w * h) if (w and h) else 0.0
 
     @api.depends('lot_id')
     def _compute_source_location(self):

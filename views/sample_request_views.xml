@@ -156,8 +156,8 @@
                                 <field name="lot_id" options="{'no_create': True}"
                                        domain="[('product_id.tracking', '!=', 'none')]"/>
                                 <field name="product_id" readonly="1"/>
-                                <field name="width_cm" string="Largo" optional="show"/>
-                                <field name="height_cm" string="Alto" optional="show"/>
+                                <field name="width_cm" string="Largo (m)" optional="show"/>
+                                <field name="height_cm" string="Alto (m)" optional="show"/>
                                 <field name="qty_selected" string="Cantidad"/>
                                 <field name="uom_name" string="Unidad"/>
                                 <field name="area_m2" sum="Total"/>

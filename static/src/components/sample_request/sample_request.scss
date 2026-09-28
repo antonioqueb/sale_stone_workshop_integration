@@ -117,23 +117,30 @@ $sm-green: #159957;
             .ic { background: $sm-blue; color: #fff; } }
     }
 
-    // ─── Lotes ───
-    .o_sm_lots { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-    .o_sm_lot {
-        text-align: left; background: #fff; border: 1.5px solid $sm-line; border-radius: 12px; padding: 10px 12px;
-        display: flex; flex-direction: column; gap: 2px; cursor: pointer; color: $sm-ink; min-width: 0;
-        .top { display: flex; justify-content: space-between; align-items: center; gap: 6px;
-            b { font-size: 14px; } .fa { color: $sm-blue; font-size: 17px; } }
-        .p { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .d, .q { color: $sm-mut; font-size: 12px; }
-        .q { font-variant-numeric: tabular-nums; color: $sm-blue-dark; font-weight: 600; .loc { color: $sm-mut; font-weight: 500; } }
-        &:hover { border-color: $sm-blue; background: #f8fbff; }
+    // ─── Materiales (placas por el selector de venta) ───
+    .o_sm_mats { display: flex; flex-direction: column; gap: 12px; border-radius: 14px; }
+    .o_sm_mat {
+        border: 1px solid #d6e3fb; background: #f8fbff; border-radius: 14px; padding: 12px;
+        display: flex; flex-direction: column; gap: 10px;
+    }
+    .o_sm_mat_head { display: flex; align-items: center; gap: 12px; }
+    .o_sm_mat_icon {
+        width: 36px; height: 36px; border-radius: 10px; flex: 0 0 auto; display: grid; place-items: center;
+        background: #eaf1fe; color: $sm-blue; font-size: 16px;
+    }
+    .o_sm_mat_name { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+        b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } small { color: $sm-mut; } }
+    .o_sm_pick_btn {
+        display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 10px; padding: 8px 14px;
+        background: $sm-blue; color: #fff; font-weight: 700; cursor: pointer; white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(11, 87, 208, 0.25);
+        &:hover { background: $sm-blue-dark; }
+    }
+    .o_sm_pick_count {
+        min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: #fff; color: $sm-blue-dark;
+        display: inline-grid; place-items: center; font-size: 12px; font-weight: 800;
     }
     .o_sm_empty { color: $sm-mut; padding: 16px; grid-column: 1 / -1; text-align: center; }
-    .o_sm_selected {
-        border: 1px solid #d6e3fb; background: #f8fbff; border-radius: 14px; padding: 12px; margin-bottom: 14px;
-        .o_sm_selected_head { color: $sm-blue-dark; margin: 0 0 8px 2px; }
-    }
 
     // ─── Tablas ───
     .o_sm_table_wrap { border: 1px solid $sm-line; border-radius: 12px; overflow-x: auto; background: #fff; }
@@ -246,6 +253,7 @@ $sm-green: #159957;
         .o_sm_steps li { padding: 8px; .t { display: none; } }
         .o_sm_steps li.on .t { display: inline; }
         .o_sm_grid, .o_sm_rev_grid, .o_sm_types { grid-template-columns: minmax(0, 1fr); }
+        .o_sm_mat_head { flex-wrap: wrap; }
         .o_sm_step_fields { grid-template-columns: minmax(0, 1fr); }
         .o_sm_step { align-items: flex-start; }
     }

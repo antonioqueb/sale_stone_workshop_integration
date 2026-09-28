@@ -6,6 +6,7 @@
 import { Component, onWillStart, useRef, useState } from "@odoo/owl";
 import { registry } from "@web/core/registry";
 import { useService } from "@web/core/utils/hooks";
+import { StoneExpandButton } from "@sale_stone_selection/components/stone_line_list/stone_line_list";
 
 const MODEL = "som.sample.request";
 
@@ -27,9 +28,29 @@ const FIELD_STEP = {
 
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
+/**
+ * El MISMO selector de placas de la venta (sale_stone_selection) sobre un
+ * "record" en memoria de la muestra: se reutiliza su popup tal cual y solo
+ * cambia el botón que lo abre. Sin resId, la confirmación va por
+ * record.update() — nunca escribe en sale.order.line.
+ */
+export class SampleStonePicker extends StoneExpandButton {
+    static template = "sale_stone_workshop_integration.SampleStonePicker";
+    static props = ["*"];
+
+    isSelectionLocked() {
+        return false;
+    }
+    _autoOpenStoneSelectorFromAllocationHub() {}
+    async _loadFullStatus() {
+        return null;
+    }
+}
+
 export class SampleRequest extends Component {
     static template = "sale_stone_workshop_integration.SampleRequest";
     static props = ["*"];
+    static components = { SampleStonePicker };
 
     setup() {
         this.orm = useService("orm");
@@ -57,10 +78,11 @@ export class SampleRequest extends Component {
             address: "",
             // Paso 2
             sampleType: "",
-            // Paso 3
-            lotQuery: "",
-            lotResults: [],
+            // Paso 3: materiales con sus placas (selector de venta)
+            productQuery: "",
+            productResults: [],
             searching: false,
+            products: [],
             selected: [],
             // Paso 4: ruta de acabados en orden + corte final
             steps: [],
@@ -78,7 +100,6 @@ export class SampleRequest extends Component {
                 this.state.loadError = (e && e.data && e.data.message) || "No se pudo abrir el asistente.";
             }
             this.state.loading = false;
-            this.searchLots("");
         });
     }
 
@@ -137,8 +158,8 @@ export class SampleRequest extends Component {
         if (key === "material") {
             if (!this.state.selected.length) {
                 e.lines = "Agrega al menos un lote.";
-            } else if (this.state.selected.some((l) => !(parseFloat(l.take) > 0) || parseFloat(l.take) > l.qty + 1e-6)) {
-                e.lines = "Revisa las cantidades: deben ser mayores a cero y no pasar de lo disponible.";
+            } else if (this.state.selected.some((l) => !(parseFloat(l.take) > 0))) {
+                e.lines = "Revisa las cantidades: deben ser mayores a cero.";
             }
         }
         if (key === "workshop" && this.state.sampleType === "cut" && !this.state.sizes.length && !this.state.steps.length) {
@@ -203,60 +224,112 @@ export class SampleRequest extends Component {
         this.state.maxStep = Math.min(this.state.maxStep, this.state.step);
     }
 
-    // ─── Paso 3: material ───
-    onLotQuery(ev) {
-        this.state.lotQuery = ev.target.value;
+    // ─── Paso 3: material — MISMO selector de placas que la venta ───
+    // Se agrega el material (producto) y "Seleccionar placas" abre el popup
+    // de sale_stone_selection (filtros, bloques, fotos, formato/pieza por
+    // cantidad). La selección regresa aquí; nada se escribe en ventas.
+    onProductQuery(ev) {
+        this.state.productQuery = ev.target.value;
         clearTimeout(this.searchTimer);
-        this.searchTimer = setTimeout(() => this.searchLots(this.state.lotQuery), 300);
-    }
-    async searchLots(q) {
-        this.state.searching = true;
-        try {
-            const exclude = this.state.selected.map((l) => l.lot_id);
-            this.state.lotResults = await this.orm.call(MODEL, "sample_search_lots", [q || "", exclude, 40]);
-        } finally {
-            this.state.searching = false;
-        }
-    }
-    addLot(lot) {
-        if (this.state.selected.some((l) => l.lot_id === lot.lot_id)) {
+        const q = this.state.productQuery.trim();
+        if (q.length < 2) {
+            this.state.productResults = [];
             return;
         }
-        this.state.selected.push({ ...lot, take: lot.qty });
-        this.state.lotResults = this.state.lotResults.filter((l) => l.lot_id !== lot.lot_id);
+        this.searchTimer = setTimeout(async () => {
+            this.state.searching = true;
+            try {
+                const rows = await this.orm.searchRead(
+                    "product.product",
+                    ["|", ["name", "ilike", q], ["default_code", "ilike", q], ["tracking", "!=", "none"]],
+                    ["display_name", "uom_id"],
+                    { limit: 15 }
+                );
+                const have = new Set(this.state.products.map((p) => p.id));
+                this.state.productResults = rows.filter((r) => !have.has(r.id)).map((r) => ({
+                    id: r.id, name: r.display_name, uom: r.uom_id ? r.uom_id[1] : "",
+                }));
+            } finally {
+                this.state.searching = false;
+            }
+        }, 300);
+    }
+    addProduct(p) {
+        this.state.products.push({ id: p.id, name: p.name, uom: p.uom, lotIds: [], breakdown: {}, lots: [] });
+        this.state.productQuery = "";
+        this.state.productResults = [];
         this.state.errors = {};
     }
-    removeLot(lot) {
-        this.state.selected = this.state.selected.filter((l) => l.lot_id !== lot.lot_id);
-        this.state.sizes = this.state.sizes.filter((s) => !s.product_id || this.selectedProducts.some((p) => p.id === s.product_id));
-        this.state.steps = this.state.steps.filter((s) => !s.product_id || this.selectedProducts.some((p) => p.id === s.product_id));
-        this.searchLots(this.state.lotQuery);
+    removeProduct(p) {
+        this.state.products = this.state.products.filter((x) => x.id !== p.id);
+        this._syncSelected();
     }
-    onTake(lot, ev) {
-        lot.take = ev.target.value;
+    /** "Record" para el selector de venta: producto, lotes y desglose de la
+     *  muestra. update() recibe la confirmación del popup. */
+    pickerRecord(p) {
+        const self = this;
+        const data = {
+            product_id: [p.id, p.name],
+            lot_ids: [...p.lotIds],
+            x_lot_breakdown_json: { ...p.breakdown },
+            product_uom_qty: 0,
+            product_uom: [0, p.uom || "m²"],
+            state: "sale",
+        };
+        return {
+            data,
+            resId: false,
+            async update(changes) {
+                const cmd = changes.lot_ids && changes.lot_ids[0];
+                const ids = cmd && cmd[0] === 6 ? cmd[2] : data.lot_ids;
+                data.lot_ids = ids;
+                data.x_lot_breakdown_json = changes.x_lot_breakdown_json || {};
+                await self.onLotsPicked(p, ids, data.x_lot_breakdown_json);
+            },
+        };
+    }
+    async onLotsPicked(p, ids, breakdown) {
+        const prod = this.state.products.find((x) => x.id === p.id);
+        if (!prod) {
+            return;
+        }
+        prod.lotIds = [...ids];
+        prod.breakdown = { ...breakdown };
+        prod.lots = ids.length ? await this.orm.call(MODEL, "sample_lot_info", [ids, breakdown]) : [];
+        this.state.errors = {};
+        this._syncSelected();
+    }
+    removeLot(lot) {
+        const prod = this.state.products.find((x) => x.id === lot.product_id);
+        if (prod) {
+            prod.lotIds = prod.lotIds.filter((id) => id !== lot.lot_id);
+            delete prod.breakdown[String(lot.lot_id)];
+            prod.lots = prod.lots.filter((l) => l.lot_id !== lot.lot_id);
+        }
+        this._syncSelected();
+    }
+    _syncSelected() {
+        this.state.selected = this.state.products.flatMap((p) => p.lots);
+        const ids = new Set(this.selectedProducts.map((p) => p.id));
+        this.state.sizes = this.state.sizes.filter((s) => !s.product_id || ids.has(s.product_id));
+        this.state.steps = this.state.steps.filter((s) => !s.product_id || ids.has(s.product_id));
+    }
+    productM2(p) {
+        return p.lots.reduce((a, l) => a + this.lotM2(l), 0);
+    }
+    lotM2(l) {
+        const take = parseFloat(l.take) || 0;
+        if (l.is_m2) {
+            return take;
+        }
+        // Medidas del lote en METROS (x_ancho × x_alto), como el selector de venta.
+        return l.width && l.height ? l.width * l.height : 0;
     }
     get selectedProducts() {
-        const seen = {};
-        const out = [];
-        for (const l of this.state.selected) {
-            if (!seen[l.product_id]) {
-                seen[l.product_id] = true;
-                out.push({ id: l.product_id, name: l.product });
-            }
-        }
-        return out;
+        return this.state.products.filter((p) => p.lots.length).map((p) => ({ id: p.id, name: p.name }));
     }
     get totalM2() {
-        let t = 0;
-        for (const l of this.state.selected) {
-            const take = parseFloat(l.take) || 0;
-            if (l.is_m2) {
-                t += take;
-            } else if (l.width && l.height) {
-                t += (l.width * l.height) / 10000;
-            }
-        }
-        return t;
+        return this.state.selected.reduce((a, l) => a + this.lotM2(l), 0);
     }
 
     // ─── Paso 4: ruta de acabados (en orden) ───
@@ -419,7 +492,10 @@ export class SampleRequest extends Component {
         return (parseFloat(v) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
     fmtDims(l) {
-        return l.width && l.height ? `${this.fmtNum(l.width)} × ${this.fmtNum(l.height)} cm` : "";
+        return l.width && l.height ? `${this.fmtDim(l.width)} × ${this.fmtDim(l.height)} m` : "";
+    }
+    fmtDim(v) {
+        return (parseFloat(v) || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
     fmtNum(v) {
         return (parseFloat(v) || 0).toLocaleString("es-MX", { maximumFractionDigits: 1 });

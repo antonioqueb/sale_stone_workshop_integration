@@ -5,6 +5,14 @@
         <div t-if="msg" class="o_sm_err"><i class="fa fa-exclamation-circle" title=""/> <t t-esc="msg"/></div>
     </t>
 
+    <!-- Botón del selector de placas (mismo popup que la venta). -->
+    <t t-name="sale_stone_workshop_integration.SampleStonePicker">
+        <button type="button" class="o_sm_pick_btn" t-on-click="() => this.openPopup()" title="Seleccionar placas">
+            <i class="fa fa-th-large" title=""/> Seleccionar placas
+            <span t-if="state.selectedCount" class="o_sm_pick_count" t-esc="state.selectedCount"/>
+        </button>
+    </t>
+
     <t t-name="sale_stone_workshop_integration.SampleRequest">
         <div class="o_sample_request o_action">
           <div class="o_sm_scroll" t-ref="root">
@@ -108,51 +116,52 @@
                             <p class="o_sm_hint mt-3"><i class="fa fa-info-circle" title=""/> En ambos casos el material se consume: sale del inventario y no se genera ningún producto. No tiene precio.</p>
                         </section>
 
-                        <!-- ═══ Material ═══ -->
+                        <!-- ═══ Material: mismo selector de placas que la venta ═══ -->
                         <section t-if="currentStep.key === 'material'">
-                            <p class="o_sm_hint">Busca por material, lote o bloque y toca el lote para agregarlo. Solo aparecen lotes libres (sin venta, apartado, taller ni otra muestra).</p>
+                            <p class="o_sm_hint">Agrega el material y usa <b>Seleccionar placas</b>: es el mismo selector de la orden de venta (filtros por lote, bloque, atado, medidas y tipo; fotos; formato/pieza por cantidad). Solo aparecen placas libres.</p>
                             <div class="o_sm_search mb-3">
                                 <i class="fa fa-search" title=""/>
-                                <input type="text" placeholder="Material, código, lote o bloque…" t-att-value="state.lotQuery" t-on-input="onLotQuery"/>
+                                <input type="text" placeholder="Agregar material: nombre o código…" t-att-value="state.productQuery" t-on-input="onProductQuery"/>
                                 <i t-if="state.searching" class="fa fa-circle-o-notch fa-spin" title=""/>
+                                <div t-if="state.productResults.length" class="o_sm_results">
+                                    <button type="button" t-foreach="state.productResults" t-as="r" t-key="r.id" t-on-click="() => this.addProduct(r)">
+                                        <i class="fa fa-cube" title=""/> <t t-esc="r.name"/>
+                                    </button>
+                                </div>
                             </div>
 
-                            <div t-if="state.selected.length" class="o_sm_selected">
-                                <div class="o_sm_selected_head">
-                                    <b>Seleccionados</b> · <t t-esc="state.selected.length"/> lote(s) · <t t-esc="fmtQty(totalM2)"/> m²
+                            <div t-att-class="{ 'o_sm_mats': true, 'o_sm_invalid': state.errors.lines }">
+                                <div class="o_sm_mat" t-foreach="state.products" t-as="p" t-key="p.id">
+                                    <div class="o_sm_mat_head">
+                                        <span class="o_sm_mat_icon"><i class="fa fa-cube" title=""/></span>
+                                        <div class="o_sm_mat_name">
+                                            <b t-esc="p.name"/>
+                                            <small t-if="p.lots.length"><t t-esc="p.lots.length"/> placa(s) · <t t-esc="fmtQty(productM2(p))"/> m²</small>
+                                            <small t-else="" class="text-warning">Sin placas seleccionadas</small>
+                                        </div>
+                                        <SampleStonePicker record="pickerRecord(p)" name="'lot_ids'" readonly="false"/>
+                                        <button type="button" class="btn btn-link text-danger btn-sm" t-on-click="() => this.removeProduct(p)" title="Quitar material"><i class="fa fa-trash-o" title="Quitar"/></button>
+                                    </div>
+                                    <div t-if="p.lots.length" class="o_sm_table_wrap">
+                                        <table class="o_sm_table">
+                                            <thead><tr><th class="l">Lote</th><th class="l">Bloque</th><th>Medidas</th><th class="l">Ubicación</th><th>A consumir</th><th/></tr></thead>
+                                            <tbody>
+                                                <tr t-foreach="p.lots" t-as="l" t-key="l.lot_id" class="sel">
+                                                    <td class="l b" t-esc="l.lot"/>
+                                                    <td class="l" t-esc="l.block or '-'"/>
+                                                    <td t-esc="fmtDims(l) or '-'"/>
+                                                    <td class="l" t-esc="l.location"/>
+                                                    <td class="b"><t t-esc="fmtQty(l.take)"/> <small t-esc="l.uom"/><small t-if="l.partial" class="text-muted"> de <t t-esc="fmtQty(l.qty)"/></small></td>
+                                                    <td><button type="button" class="btn btn-link text-danger btn-sm" t-on-click="() => this.removeLot(l)" title="Quitar"><i class="fa fa-times" title="Quitar"/></button></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
-                                <div class="o_sm_table_wrap">
-                                    <table class="o_sm_table">
-                                        <thead><tr><th class="l">Material</th><th>Lote</th><th>Medidas</th><th>Disponible</th><th class="qty">A consumir</th><th/></tr></thead>
-                                        <tbody>
-                                            <tr t-foreach="state.selected" t-as="l" t-key="l.lot_id" class="sel">
-                                                <td class="l"><div class="p" t-esc="l.product"/><div class="d" t-if="l.block">Bloque <t t-esc="l.block"/> · <t t-esc="l.location"/></div><div class="d" t-else="" t-esc="l.location"/></td>
-                                                <td class="b" t-esc="l.lot"/>
-                                                <td t-esc="fmtDims(l)"/>
-                                                <td><t t-esc="fmtQty(l.qty)"/> <small t-esc="l.uom"/></td>
-                                                <td class="qty">
-                                                    <div class="o_sm_qty">
-                                                        <input type="number" min="0" step="any" inputmode="decimal" t-att-value="l.take" t-on-input="(ev) => this.onTake(l, ev)"/>
-                                                        <small t-esc="l.uom"/>
-                                                    </div>
-                                                </td>
-                                                <td><button type="button" class="btn btn-link text-danger btn-sm" t-on-click="() => this.removeLot(l)" title="Quitar"><i class="fa fa-trash-o" title="Quitar"/></button></td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
+                                <div t-if="!state.products.length" class="o_sm_empty">Agrega un material para seleccionar sus placas.</div>
                             </div>
+                            <div class="o_sm_total" t-if="state.selected.length"><t t-esc="state.selected.length"/> placa(s) · <t t-esc="fmtQty(totalM2)"/> m² a consumir</div>
                             <t t-call="sale_stone_workshop_integration.SampleRequestErr"><t t-set="msg" t-value="state.errors.lines"/></t>
-
-                            <div class="o_sm_lots">
-                                <button type="button" class="o_sm_lot" t-foreach="state.lotResults" t-as="l" t-key="l.lot_id" t-on-click="() => this.addLot(l)">
-                                    <span class="top"><b t-esc="l.lot"/><i class="fa fa-plus-circle" title="Agregar"/></span>
-                                    <span class="p" t-esc="l.product"/>
-                                    <span class="d"><t t-if="l.block">Bloque <t t-esc="l.block"/> · </t><t t-esc="fmtDims(l)"/></span>
-                                    <span class="q"><t t-esc="fmtQty(l.qty)"/> <t t-esc="l.uom"/> <span class="loc" t-if="l.location">· <t t-esc="l.location"/></span></span>
-                                </button>
-                                <div t-if="!state.lotResults.length and !state.searching" class="o_sm_empty">Sin lotes libres con esa búsqueda.</div>
-                            </div>
                         </section>
 
                         <!-- ═══ Taller: ruta de acabados EN ORDEN + corte final ═══ -->
