@@ -183,3 +183,58 @@ class TestSaleWorkshopLogistics(WorkshopCase):
         self.assertFalse(self._activities(order))
         order.action_start_workshop()
         self.assertEqual(order.state, 'in_workshop')
+
+    def test_09_tablet_start_waits_for_logistics(self):
+        lot = self.make_lot('PRB-S10', 5.0)
+        _so, order = self._sale_order_with_workshop([(lot, 5.0)])
+        detail = order.tablet_start()
+        self.assertEqual(order.state, 'confirmed', 'Sin material entregado queda confirmada')
+        self.assertFalse(order.timer_running)
+        self.assertFalse(detail['can_start'])
+        self.assertTrue(detail['start_block_reason'])
+        self.assertTrue(self._activities(order))
+
+    def test_10_chain_finish_then_cut_end_to_end(self):
+        """Pulido (paso 1) → Corte (paso 2) de la misma venta."""
+        lot = self.make_lot('PRB-S11', 6.0)
+        so, step1 = self._sale_order_with_workshop([(lot, 6.0)])
+        step2 = self.env['workshop.order'].create({
+            'process_id': self.p_cut.id,
+            'company_id': self.company.id,
+            'warehouse_id': self.warehouse.id,
+            'input_product_id': self.finished.id,
+            'default_product_out_id': self.cut.id,
+            'sale_order_id': so.id,
+            'sale_line_id': step1.sale_line_id.id,
+            'stone_workshop_chain_sequence': 2,
+            'stone_workshop_chain_prev_order_id': step1.id,
+        })
+        step1.stone_workshop_chain_next_order_id = step2.id
+        # El corte no se confirma mientras el pulido no entregue nada.
+        with self.assertRaisesRegex(UserError, 'paso anterior'):
+            step2.action_confirm_workshop()
+        # Pulido: Logística entrega, taller inicia, trabaja y cierra.
+        step1.action_confirm_workshop()
+        self.env['sale.delivery.live.map'].som_deliver_to_workshop(
+            step1.sale_workshop_reservation_picking_id.id)
+        step1.action_start_workshop()
+        self.log(step1, [(step1.input_line_ids, 6.0)], 6.0)
+        step1.action_declare_result()
+        self.assertEqual(step1.state, 'done')
+        # El corte recibe el material pulido como entrada.
+        step2.invalidate_recordset()
+        fed = step2.input_line_ids.filtered(lambda l: l.state != 'cancelled')
+        self.assertTrue(fed, 'El paso 2 se alimenta con lo que produjo el paso 1')
+        self.assertEqual(fed.mapped('product_id'), self.finished)
+        step2.action_confirm_workshop()
+        self.assertEqual(step2.state, 'confirmed')
+        if step2.sale_workshop_reservation_picking_id and \
+                step2.sale_workshop_reservation_picking_id.state != 'done':
+            self.assertFalse(step2.material_ready)
+            self.env['sale.delivery.live.map'].som_deliver_to_workshop(
+                step2.sale_workshop_reservation_picking_id.id)
+        step2.action_start_workshop()
+        self.assertEqual(step2.state, 'in_workshop')
+        self.log(step2, [(fed[:1], 6.0)], 5.0)
+        step2.action_declare_result()
+        self.assertEqual(step2.state, 'done')
