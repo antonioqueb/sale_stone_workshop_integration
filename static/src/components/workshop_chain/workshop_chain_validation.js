@@ -139,6 +139,37 @@ export function validateWorkshopChain(chain) {
         }
     });
 
+    // Regla de taller: acabados → corte → formato. Un corte antes de un
+    // acabado es error (el servidor también lo rechaza).
+    let bestRank = null;
+    let bestPos = null;
+    let bestName = "";
+    steps.forEach((step, index) => {
+        const rank = typeof step.rank === "number" ? step.rank : null;
+        if (rank === null) {
+            return;
+        }
+        const position = index + 1;
+        if (bestRank !== null && rank < bestRank) {
+            issues.push({
+                level: "error",
+                stepKey: step.key,
+                message: _t(
+                    "Regla de taller: primero los acabados y al final el corte / formato. El paso %(pos)s (%(name)s) no puede ir después del paso %(prev)s (%(prevName)s)."
+                )
+                    .replace("%(pos)s", position)
+                    .replace("%(name)s", step.processName || step.groupLabel || "")
+                    .replace("%(prev)s", bestPos)
+                    .replace("%(prevName)s", bestName),
+            });
+        }
+        if (bestRank === null || rank > bestRank) {
+            bestRank = rank;
+            bestPos = position;
+            bestName = step.processName || step.groupLabel || "";
+        }
+    });
+
     const status = issues.some((i) => i.level === "error")
         ? "error"
         : issues.some((i) => i.level === "warning")

@@ -39,6 +39,9 @@
             <div class="o_sw_node_name"
                  t-out="props.row.processName || 'Sin proceso'"
                  t-att-class="props.row.processName ? '' : 'o_sw_missing_text'"/>
+            <span t-if="props.row.groupLabel" class="o_sw_group_badge"
+                  t-att-class="'o_sw_group_' + props.row.rank"
+                  t-out="props.row.groupLabel"/>
             <div t-if="props.row.ot" class="o_sw_node_ot">
                 <i t-if="props.row.locked" class="fa fa-lock me-1" t-att-title="props.row.lockReason"/>
                 <span t-out="props.row.ot.name"/> · <span t-out="props.row.ot.state_label"/>
@@ -93,8 +96,11 @@
             </td>
             <td class="text-center" t-out="row.position"/>
             <td>
-                <span t-if="row.type === 'main'" class="badge text-bg-primary">Principal</span>
-                <span t-else="" class="badge text-bg-light text-dark border">Adicional</span>
+                <span t-if="row.groupLabel" class="o_sw_group_badge"
+                      t-att-class="'o_sw_group_' + row.rank"
+                      t-out="row.groupLabel"/>
+                <span t-else="" class="badge text-bg-light text-dark border">—</span>
+                <span t-if="row.type === 'main'" class="badge text-bg-primary ms-1" title="Proceso principal de la línea de venta">Principal</span>
             </td>
             <td>
                 <span t-out="row.processName" t-if="row.processName"/>
@@ -250,12 +256,20 @@
                         <option value="" t-att-selected="!row.processId ? 'selected' : undefined">
                             Selecciona un proceso…
                         </option>
-                        <t t-foreach="props.processes" t-as="process" t-key="process.id">
-                            <option t-att-value="process.id"
-                                    t-att-selected="row.processId === process.id ? 'selected' : undefined"
-                                    t-out="process.name"/>
+                        <t t-foreach="processGroups" t-as="group" t-key="group.key">
+                            <optgroup t-att-label="group.label">
+                                <t t-foreach="group.processes" t-as="process" t-key="process.id">
+                                    <option t-att-value="process.id"
+                                            t-att-selected="row.processId === process.id ? 'selected' : undefined"
+                                            t-out="process.name"/>
+                                </t>
+                            </optgroup>
                         </t>
                     </select>
+                    <div class="form-text">
+                        Los acabados siempre van antes del corte / formato; si eliges un
+                        acabado después de un corte, el paso sube solo.
+                    </div>
                 </div>
 
                 <div class="mb-3">
@@ -346,6 +360,25 @@
             <t t-else="">
                 <WorkshopChainValidationBanner validation="validation"
                                                summary="validationSummary"/>
+
+                <div class="o_sw_rule_banner" role="note">
+                    <i class="fa fa-sort-amount-asc fa-lg" title="Orden obligatorio"/>
+                    <div class="o_sw_rule_text">
+                        <div class="o_sw_rule_title">
+                            Orden obligatorio de la cadena:
+                            <span class="o_sw_group_badge o_sw_group_0">Acabado</span>
+                            <i class="fa fa-long-arrow-right mx-1" role="img" aria-label="luego"/>
+                            <span class="o_sw_group_badge o_sw_group_1">Corte</span>
+                            <span class="text-muted">/</span>
+                            <span class="o_sw_group_badge o_sw_group_2">Formato</span>
+                        </div>
+                        <div class="o_sw_rule_desc" t-out="state.orderRule"/>
+                        <div t-if="state.autoOrderNote" class="o_sw_rule_note">
+                            <i class="fa fa-magic me-1" role="img" aria-label="reordenado"/>
+                            <t t-out="state.autoOrderNote"/>
+                        </div>
+                    </div>
+                </div>
 
                 <div class="o_sw_ws_body">
                     <div class="o_sw_ws_context text-muted small">

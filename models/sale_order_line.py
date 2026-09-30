@@ -403,6 +403,65 @@ class SaleOrderLine(models.Model):
 
     _WORKSHOP_CHAIN_LOCKED_STATES = ('in_workshop', 'done')
 
+    # Regla de taller (30 sep 2026, pedido del cliente): en una cadena con
+    # varios procesos SIEMPRE van primero los acabados (pulido, matizado,
+    # busardeado, reproceso…) y al final el corte / formato, sin importar en
+    # qué orden los capturó el vendedor. El asistente reordena solo y el
+    # servidor rechaza cadenas que rompan la regla.
+    _WORKSHOP_CHAIN_RANK = {
+        'finish': 0, 'rework': 0, 'other': 0,
+        'cut': 1, 'format': 2,
+    }
+    _WORKSHOP_CHAIN_GROUP_LABELS = {
+        0: 'Acabado', 1: 'Corte', 2: 'Formato',
+    }
+
+    @api.model
+    def _workshop_chain_process_rank(self, process):
+        if not process:
+            return None
+        return self._WORKSHOP_CHAIN_RANK.get(process.process_type or 'other', 0)
+
+    @api.model
+    def _workshop_chain_process_payload(self, process):
+        if not process:
+            return False
+        rank = self._workshop_chain_process_rank(process)
+        return {
+            'id': process.id,
+            'name': process.display_name or '',
+            'process_type': process.process_type or 'other',
+            'rank': rank,
+            'group_label': self._WORKSHOP_CHAIN_GROUP_LABELS.get(rank, 'Acabado'),
+        }
+
+    @api.model
+    def _workshop_chain_order_errors(self, processes):
+        """Mensajes de error si la lista ordenada de procesos rompe la regla
+        acabados → corte → formato (lista vacía = orden correcto)."""
+        errors = []
+        best = None
+        best_pos = None
+        for index, process in enumerate(processes, start=1):
+            rank = self._workshop_chain_process_rank(process)
+            if rank is None:
+                continue
+            if best is not None and rank < best:
+                errors.append(_(
+                    'Regla de taller: primero los acabados y al final el corte / formato. '
+                    'El paso %(pos)s (%(name)s, %(group)s) no puede ir después del paso '
+                    '%(prev_pos)s (%(prev_group)s).'
+                ) % {
+                    'pos': index,
+                    'name': process.display_name or '',
+                    'group': self._WORKSHOP_CHAIN_GROUP_LABELS.get(rank, ''),
+                    'prev_pos': best_pos,
+                    'prev_group': self._WORKSHOP_CHAIN_GROUP_LABELS.get(best, ''),
+                })
+            if best is None or rank > best:
+                best, best_pos = rank, index
+        return errors
+
     def _workshop_chain_product_payload(self, product):
         if not product:
             return False
@@ -465,10 +524,7 @@ class SaleOrderLine(models.Model):
         steps = [{
             'pl_id': 0,
             'type': 'main',
-            'process': self._workshop_chain_product_payload(False) if not self.stone_workshop_process_id else {
-                'id': self.stone_workshop_process_id.id,
-                'name': self.stone_workshop_process_id.display_name or '',
-            },
+            'process': self._workshop_chain_process_payload(self.stone_workshop_process_id),
             'receive': self._workshop_chain_product_payload(self.stone_workshop_base_product_id),
             'ot': main_ot,
             'locked': main_locked,
@@ -482,20 +538,20 @@ class SaleOrderLine(models.Model):
             steps.append({
                 'pl_id': process_line.id,
                 'type': 'extra',
-                'process': {
-                    'id': process_line.process_id.id,
-                    'name': process_line.process_id.display_name or '',
-                } if process_line.process_id else False,
+                'process': self._workshop_chain_process_payload(process_line.process_id),
                 'receive': self._workshop_chain_product_payload(process_line.input_product_id),
                 'ot': ot,
                 'locked': locked,
                 'lock_reason': reason,
             })
 
-        processes = [{
-            'id': process.id,
-            'name': process.display_name or '',
-        } for process in self.env['workshop.process'].search([])]
+        processes = [
+            self._workshop_chain_process_payload(process)
+            for process in self.env['workshop.process'].search([])
+        ]
+        # Acabados primero en el catálogo, corte/formato al final (mismo
+        # orden en que deben ir en la cadena).
+        processes.sort(key=lambda p: (p['rank'], p['name']))
 
         uom = self._stone_workshop_get_line_uom()
 
@@ -513,6 +569,10 @@ class SaleOrderLine(models.Model):
             },
             'steps': steps,
             'processes': processes,
+            'order_rule': _(
+                'Regla de taller: primero los ACABADOS (pulido, matizado, busardeado, '
+                'reproceso…) y al final el CORTE / FORMATO. No importa en qué orden los '
+                'agregues: el sistema acomoda los pasos en ese orden.'),
         }
 
     @api.model
@@ -554,6 +614,13 @@ class SaleOrderLine(models.Model):
             elif all(pair):
                 seen_pairs[pair] = index
 
+        # Regla de taller: acabados → corte → formato.
+        Process = self.env['workshop.process']
+        errors += self._workshop_chain_order_errors([
+            Process.browse(int(step.get('process_id') or 0)).exists()
+            for step in steps
+        ])
+
         return errors
 
     def save_workshop_chain_from_workspace(self, payload):
@@ -587,9 +654,21 @@ class SaleOrderLine(models.Model):
             skip_stone_workshop_chain_resync=True,
         )
 
-        # 1) Paso principal: proceso de la línea.
+        # 1) Paso principal: proceso de la línea. Si el paso 1 era un paso
+        #    adicional (la regla acabados→corte lo subió), su renglón se
+        #    elimina y el antiguo principal baja como renglón nuevo.
         main = steps[0]
         main_process_id = int(main.get('process_id') or 0)
+        promoted_id = int(main.get('id') or 0)
+        if promoted_id and promoted_id not in deleted_ids:
+            promoted = ProcessLine.browse(promoted_id).exists()
+            if promoted and promoted.sale_line_id == self:
+                if promoted.workshop_order_id and promoted.workshop_order_id.state != 'cancel':
+                    raise UserError(_(
+                        'El paso "%(step)s" pasa a ser el paso 1 (regla acabados → corte), '
+                        'pero ya tiene la orden de taller %(ot)s. Cancela esa OT primero.'
+                    ) % {'step': promoted.name, 'ot': promoted.workshop_order_id.name})
+                deleted_ids.append(promoted_id)
         if main_process_id and self.stone_workshop_process_id.id != main_process_id:
             main_workshop = self.stone_workshop_order_id
             if main_workshop and main_workshop.state in self._WORKSHOP_CHAIN_LOCKED_STATES:

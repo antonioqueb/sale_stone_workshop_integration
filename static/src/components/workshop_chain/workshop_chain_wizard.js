@@ -266,6 +266,18 @@ export class WorkshopChainStepEditor extends Component {
         return this.props.row;
     }
 
+    get processGroups() {
+        const groups = [
+            { key: "finish", label: _t("Acabados (van primero)"), processes: [] },
+            { key: "cut", label: _t("Corte / Formato (va al final)"), processes: [] },
+        ];
+        for (const process of this.props.processes || []) {
+            const rank = typeof process.rank === "number" ? process.rank : 0;
+            (rank > 0 ? groups[1] : groups[0]).processes.push(process);
+        }
+        return groups.filter((g) => g.processes.length);
+    }
+
     onProcessChange(ev) {
         const processId = parseInt(ev.target.value, 10) || null;
         const process = this.props.processes.find((p) => p.id === processId);
@@ -367,6 +379,8 @@ export class WorkshopChainWizard extends Component {
             draggingKey: null,
             dirty: false,
             saving: false,
+            orderRule: "",
+            autoOrderNote: "",
         });
 
         onWillStart(() => this.loadData());
@@ -395,7 +409,12 @@ export class WorkshopChainWizard extends Component {
             locked: !!raw.locked,
             lockReason: raw.lock_reason || "",
         }));
+        this.state.orderRule = data.order_rule || "";
+        this.state.autoOrderNote = "";
         this.state.loading = false;
+        // Cadena guardada fuera de orden (capturas previas a la regla): se
+        // acomoda al abrir y queda pendiente de guardar.
+        this.enforceChainOrder();
         // Entregas pendientes que el catálogo de recetas pueda resolver.
         await this.autoFillChainFrom(0);
     }
@@ -501,6 +520,9 @@ export class WorkshopChainWizard extends Component {
                 plId: step.plId,
                 processId: step.process ? step.process.id : null,
                 processName: step.process ? step.process.name : "",
+                // Regla acabados → corte: grupo del proceso para pintarlo claro.
+                rank: this.rankOfProcess(step.process),
+                groupLabel: step.process ? step.process.group_label || "" : "",
                 receive: this.receiveOf(index),
                 deliver: this.deliverOf(index),
                 isLast,
@@ -513,11 +535,12 @@ export class WorkshopChainWizard extends Component {
                 deliverLockReason: deliverLockedByNext ? nextStep.lockReason : "",
                 canEdit: !step.locked,
                 canDelete: step.type === "extra" && !step.locked,
-                // Reordenable: paso adicional, sin OT bloqueada y posicionado
-                // después del último paso bloqueado (mover algo antes de un
-                // paso bloqueado cambiaría el material de una OT intocable).
-                reorderable:
-                    step.type === "extra" && !step.locked && index > lastLockedIndex,
+                // Reordenable: sin OT bloqueada y posicionado después del
+                // último paso bloqueado (mover algo antes de un paso bloqueado
+                // cambiaría el material de una OT intocable). El principal
+                // también: si el vendedor capturó el corte como principal y
+                // luego el pulido, el pulido debe poder subir al paso 1.
+                reorderable: !step.locked && index > lastLockedIndex,
                 issues: [],
             };
         });
@@ -542,10 +565,71 @@ export class WorkshopChainWizard extends Component {
                 key: step.key,
                 processId: step.process ? step.process.id : null,
                 processName: step.process ? step.process.name : "",
+                rank: this.rankOfProcess(step.process),
+                groupLabel: step.process ? step.process.group_label || "" : "",
                 receiveProduct: this.receiveOf(index),
                 deliverProduct: this.deliverOf(index),
             })),
         });
+    }
+
+    /* ------------------------------------------------------------------
+     * Regla de taller: acabados → corte → formato
+     * ------------------------------------------------------------------ */
+
+    rankOfProcess(process) {
+        return process && typeof process.rank === "number" ? process.rank : null;
+    }
+
+    /**
+     * Acomoda los pasos móviles (sin OT bloqueada) según la regla de taller:
+     * primero los acabados, al final el corte / formato. Orden estable: entre
+     * pasos del mismo grupo se respeta lo que capturó el vendedor. Devuelve
+     * true si algo cambió de lugar (y lo explica con una notificación).
+     */
+    enforceChainOrder() {
+        const steps = this.state.steps;
+        const lastLockedIndex = steps.reduce(
+            (acc, step, index) => (step.locked ? index : acc),
+            -1
+        );
+        const fixed = steps.slice(0, lastLockedIndex + 1);
+        const movable = steps.slice(lastLockedIndex + 1);
+        if (movable.length < 2) {
+            return false;
+        }
+        // Paso sin proceso todavía: se queda donde está (rango neutro = el
+        // del paso anterior) para no brincar mientras el vendedor captura.
+        const effectiveRank = [];
+        movable.forEach((step, index) => {
+            const rank = this.rankOfProcess(step.process);
+            effectiveRank.push(
+                rank !== null ? rank : index > 0 ? effectiveRank[index - 1] : 0
+            );
+        });
+        const sorted = movable
+            .map((step, index) => ({ step, rank: effectiveRank[index], index }))
+            .sort((a, b) => a.rank - b.rank || a.index - b.index)
+            .map((item) => item.step);
+        const changed = sorted.some((step, index) => step !== movable[index]);
+        if (!changed) {
+            return false;
+        }
+        // Las entregas intermedias cambian de sentido al reordenar: se
+        // vuelven a resolver con las recetas (o las captura el vendedor).
+        for (const step of sorted) {
+            step.deliver = null;
+        }
+        this.state.steps = [...fixed, ...sorted];
+        this.state.dirty = true;
+        const sequence = this.state.steps
+            .map((step, index) => `${index + 1}. ${step.process ? step.process.name : "…"}`)
+            .join("  →  ");
+        this.state.autoOrderNote = _t(
+            "Acomodamos los pasos según la regla de taller (acabados primero, corte al final): %s"
+        ).replace("%s", sequence);
+        this.notification.add(this.state.autoOrderNote, { type: "info", sticky: false });
+        return true;
     }
 
     get validationSummary() {
@@ -633,9 +717,12 @@ export class WorkshopChainWizard extends Component {
         if (step && !step.locked) {
             step.process = process;
             this.state.dirty = true;
+            // Regla acabados → corte: si el proceso elegido va antes que
+            // otros ya capturados, la cadena se acomoda sola.
+            const reordered = this.enforceChainOrder();
             // Con el proceso definido, la receta puede resolver la entrega
             // de este paso (y en cascada las de los siguientes).
-            const index = this.state.steps.findIndex((s) => s.key === key);
+            const index = reordered ? 0 : this.state.steps.findIndex((s) => s.key === key);
             await this.autoFillChainFrom(index);
         }
     }
@@ -682,6 +769,11 @@ export class WorkshopChainWizard extends Component {
         const [moved] = steps.splice(fromIndex, 1);
         steps.splice(toIndex, 0, moved);
         this.state.dirty = true;
+        // Arrastrar un corte antes de un acabado no se permite: la regla
+        // vuelve a acomodar y avisa.
+        if (this.enforceChainOrder()) {
+            this.autoFillChainFrom(0);
+        }
     }
 
     async searchProducts(term) {
