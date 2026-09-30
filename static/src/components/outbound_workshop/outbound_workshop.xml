@@ -42,6 +42,10 @@
                         t-on-click="() => this.deliverToWorkshop(card.id)">
                     Entregar a taller
                 </button>
+                <button class="o_out_btn ghost" title="Imprimir la recolección de taller"
+                        t-on-click="() => this.printWorkshopPick(card.workshop_id)">
+                    🖨 Recolección
+                </button>
                 <button class="o_out_btn ghost"
                         t-on-click="() => this.openWorkshopPicking(card.id)">
                     Abrir

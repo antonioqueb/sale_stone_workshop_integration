@@ -52,7 +52,7 @@ class StockQuant(models.Model):
             # placa ya está físicamente de vuelta en el stock disponible.
             if (
                 order.sale_order_id
-                and order.state == 'draft'
+                and order.state in ('draft', 'confirmed')
                 and line.state in SALE_LINKED_INPUT_STATES
             ):
                 committed_ids.add(line.lot_id.id)

@@ -50,6 +50,23 @@ patch(OutboundDashboard.prototype, {
         }
     },
 
+    /** Imprime la recolección de taller (pick ticket de taller) de la OT. */
+    async printWorkshopPick(workshopId) {
+        try {
+            const action = await this.orm.call(
+                "workshop.order",
+                "action_print_pick_report",
+                [[workshopId]]
+            );
+            if (action) {
+                await this.action.doAction(action);
+            }
+        } catch (error) {
+            console.error("[SALE WORKSHOP] print pick failed:", error);
+            this.notification.add("No se pudo imprimir la recolección de taller.", { type: "danger" });
+        }
+    },
+
     /** Abre el traslado por si hay que revisarlo antes de entregar. */
     openWorkshopPicking(pickingId) {
         this.action.doAction({

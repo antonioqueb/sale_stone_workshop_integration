@@ -19,6 +19,35 @@ _logger = logging.getLogger(__name__)
 class StockPicking(models.Model):
     _inherit = 'stock.picking'
 
+    def _action_done(self):
+        res = super()._action_done()
+        # Logística entregó el material de una OT confirmada (traslado de
+        # reserva validado desde el Tablero de Salidas o desde Inventario):
+        # las placas quedan consumidas en taller y se cierra el aviso. Jamás
+        # tumba la validación; si algo falla, «Iniciar taller» lo repara.
+        try:
+            self._sale_workshop_apply_delivered_reservations()
+        except Exception:
+            _logger.exception(
+                '[SALE WORKSHOP] Fallo aplicando la entrega a taller de %s',
+                self.mapped('name'))
+        return res
+
+    def _sale_workshop_apply_delivered_reservations(self):
+        done = self.filtered(lambda p: p.state == 'done')
+        if not done:
+            return
+        Workshop = self.env['workshop.order'].sudo()
+        if 'sale_workshop_reservation_picking_id' not in Workshop._fields:
+            return
+        orders = Workshop.search([
+            ('sale_workshop_reservation_picking_id', 'in', done.ids),
+            ('state', 'in', ('draft', 'confirmed')),
+        ])
+        for order in orders:
+            order._sale_workshop_apply_delivered_reservation(
+                order.sale_workshop_reservation_picking_id)
+
     def button_validate(self):
         res = super().button_validate()
         # Cosmético-defensivo: el hueco se repara, pero jamás debe tumbar
@@ -52,7 +81,7 @@ class StockPicking(models.Model):
         ])
         for line in sels.mapped('sale_line_id'):
             workshop = line.stone_workshop_order_id
-            if not workshop or workshop.state not in ('draft', 'validated'):
+            if not workshop or workshop.state not in ('draft', 'confirmed', 'validated'):
                 continue
             line.sudo().with_context(
                 skip_sale_workshop_reception_resync=True,

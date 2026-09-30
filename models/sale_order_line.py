@@ -775,7 +775,7 @@ class SaleOrderLine(models.Model):
             # dentro de taller.
             workshops = self.env['workshop.order'].sudo().search([
                 ('sale_line_id', 'in', real_lines.ids),
-                ('state', 'in', ('draft', 'in_workshop')),
+                ('state', 'in', ('draft', 'confirmed', 'in_workshop')),
             ])
             blocking = workshops.filtered(lambda o: o.state == 'in_workshop')
             if blocking:
@@ -848,7 +848,7 @@ class SaleOrderLine(models.Model):
         # .sudo(): sincronizar la OT desde la venta es plomería.
         workshop_order = self.stone_workshop_order_id.sudo()
 
-        if not workshop_order or workshop_order.state != 'draft':
+        if not workshop_order or workshop_order.state not in ('draft', 'confirmed'):
             return
 
         vals = {}
@@ -980,7 +980,7 @@ class SaleOrderLine(models.Model):
                 if (workshop.stone_workshop_chain_next_order_id.id or False) != next_id:
                     vals['stone_workshop_chain_next_order_id'] = next_id
 
-                if workshop.state == 'draft':
+                if workshop.state in ('draft', 'confirmed'):
                     step = steps[index]
                     if step['process'] and workshop.process_id != step['process']:
                         vals['process_id'] = step['process'].id
@@ -997,7 +997,7 @@ class SaleOrderLine(models.Model):
             for index in range(len(chain) - 1):
                 prev_ws = chain[index]
                 next_ws = chain[index + 1]
-                if prev_ws.state == 'done' and next_ws.state == 'draft':
+                if prev_ws.state == 'done' and next_ws.state in ('draft', 'confirmed'):
                     prev_ws._stone_workshop_feed_next_chain_orders()
 
         return True

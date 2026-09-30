@@ -38,17 +38,22 @@ class SaleDeliveryLiveMap(models.TransientModel):
 
     @api.model
     def _som_workshop_pending_deliveries(self):
-        """OTs en borrador cuyo material sigue sin entregarse a taller."""
+        """OTs CONFIRMADAS cuyo material sigue sin entregarse a taller.
+
+        Confirmar la OT es el disparo (30 sep 2026): el taller ya dijo que la
+        operación se hace; Logística imprime la recolección y entrega el
+        material cuando se requiera. Un borrador todavía no compromete nada,
+        por eso no aparece aquí."""
         Workshop = self.env['workshop.order'].sudo()
         if 'sale_workshop_reservation_picking_id' not in Workshop._fields:
             return Workshop.browse()
         return Workshop.search([
-            ('state', '=', 'draft'),
+            ('state', '=', 'confirmed'),
             ('sale_workshop_reservation_picking_id', '!=', False),
             ('sale_workshop_reservation_picking_id.state', 'in', _PENDIENTE),
             # Tablero (sudo): compañías activas del usuario.
             ('company_id', 'in', self.env.companies.ids),
-        ], order='create_date asc')
+        ], order='date_confirmed asc, create_date asc')
 
     @api.model
     def get_outbound_dashboard_data(self):
@@ -83,8 +88,9 @@ class SaleDeliveryLiveMap(models.TransientModel):
                 for u, q in sorted(por_uom.items(), key=lambda x: -x[1])
             ) or '0'
 
-            creado = wo.create_date and fields.Datetime.context_timestamp(
-                self, wo.create_date)
+            # Días esperando desde que el taller confirmó la orden.
+            desde = wo.date_confirmed or wo.create_date
+            creado = desde and fields.Datetime.context_timestamp(self, desde)
             dias = (hoy - creado.date()).days if creado else 0
 
             tarjetas.append({
@@ -131,6 +137,22 @@ class SaleDeliveryLiveMap(models.TransientModel):
         if picking.state == 'cancel':
             return {'ok': False,
                     'error': _('El traslado %s está cancelado.') % picking.name}
+
+        # Placas recibidas más chicas que lo reservado: se ajusta la entrada
+        # a lo real y se rehace la reserva ANTES de validar (antes lo hacía
+        # el taller al confirmar). Plomería con sudo; la validación, como el
+        # usuario.
+        Workshop = self.env['workshop.order'].sudo()
+        wo = Workshop.search([
+            ('sale_workshop_reservation_picking_id', '=', picking.id),
+            ('state', 'in', ('draft', 'confirmed')),
+        ], limit=1)
+        if wo:
+            fresh = wo._sale_workshop_prepare_reservation_for_delivery()
+            if fresh and fresh.id != picking.id:
+                picking = self.env['stock.picking'].browse(fresh.id)
+                if picking.state == 'done':
+                    return {'ok': True}
 
         # Odoo 17+ no valida lo que no está marcado como surtido: sin esto
         # button_validate se queja de que no hay nada que mover, aunque las

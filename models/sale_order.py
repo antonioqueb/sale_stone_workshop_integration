@@ -202,7 +202,7 @@ class SaleOrder(models.Model):
             # las placas. Es plomería, no una acción de taller del vendedor.
             draft_workshops = self.env['workshop.order'].sudo().search([
                 ('sale_order_id', '=', order.id),
-                ('state', '=', 'draft'),
+                ('state', 'in', ('draft', 'confirmed')),
             ])
             if draft_workshops:
                 draft_workshops.action_cancel()

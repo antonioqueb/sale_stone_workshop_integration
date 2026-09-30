@@ -17,25 +17,194 @@ ACTIVE_WORKSHOP_STATES = (
 class WorkshopOrder(models.Model):
     _inherit = 'workshop.order'
 
-    # ── CANDADO: taller no arranca sin el material ────────────────────
+    # ── CANDADO: taller no INICIA sin el material ─────────────────────
     # El vendedor crea la OT desde su venta, pero el material sigue en el
-    # almacén: la OT solo deja un traslado interno RESERVADO. Si taller
-    # pudiera confirmar con el traslado sin validar, el sistema diría que
-    # el material está en taller cuando físicamente sigue en el rack —
-    # justo el desorden que este flujo viene a evitar. Logística entrega
-    # desde el Tablero de Salidas y eso libera el paso.
+    # almacén: la OT solo deja un traslado interno RESERVADO. Confirmar la
+    # OT solo compromete la operación (y avisa a Logística); si taller
+    # pudiera iniciar con el traslado sin validar, el sistema diría que el
+    # material está en taller cuando físicamente sigue en el rack. Logística
+    # entrega desde el Tablero de Salidas (columna "A taller") y eso libera
+    # el paso «Iniciar taller».
 
-    def action_confirm_workshop(self):
-        for rec in self:
-            picking = rec.sale_workshop_reservation_picking_id
-            if picking and picking.state not in ('done', 'cancel'):
-                raise UserError(_(
-                    'El material de %(ot)s todavía no se entrega a taller.\n\n'
-                    'Logística tiene que entregar el traslado %(pick)s '
-                    '(Entregas › Salidas › columna "A taller"). En cuanto lo '
-                    'entregue, esta orden se puede confirmar.'
-                ) % {'ot': rec.name or '', 'pick': picking.name or ''})
-        return super().action_confirm_workshop()
+    LOGISTICS_ACTIVITY_PREFIX = 'Entrega a taller'
+
+    def _workshop_material_block_reason(self):
+        reason = super()._workshop_material_block_reason()
+        if reason:
+            return reason
+        prev = self.stone_workshop_chain_prev_order_id
+        if prev and not prev._stone_workshop_chain_has_delivered():
+            state_labels = dict(prev._fields['state'].selection)
+            return _(
+                'Es el paso %(seq)s de una cadena y el paso anterior %(prev)s (%(state)s) '
+                'todavía no entrega material (ni resultado ni entrega parcial). Sus '
+                'entradas serán exactamente el material que ese paso produzca.'
+            ) % {
+                'seq': self.stone_workshop_chain_sequence or 2,
+                'prev': prev.name,
+                'state': state_labels.get(prev.state, prev.state),
+            }
+        picking = self.sale_workshop_reservation_picking_id
+        if picking and picking.state not in ('done', 'cancel'):
+            return _(
+                'Logística todavía no entrega el material de %(ot)s a taller: falta '
+                'validar el traslado %(pick)s desde Entregas › Salidas › columna '
+                '"A taller" (ahí se imprime la recolección). En cuanto lo entregue, '
+                'la orden se puede iniciar.'
+            ) % {'ot': self.name or '', 'pick': picking.name or ''}
+        return False
+
+    @api.depends('sale_workshop_reservation_picking_id.state',
+                 'stone_workshop_chain_prev_order_id.state')
+    def _compute_material_block_reason(self):
+        # Solo suma dependencias (el traslado de reserva y el paso anterior);
+        # el cálculo vive en el módulo base.
+        return super()._compute_material_block_reason()
+
+    # ── Aviso a Logística (Centro de Actividades) ─────────────────────
+    def _sale_workshop_logistics_users(self):
+        users = self.env['res.users']
+        for xmlid in ('sale_delivery_auth.group_delivery_logistics',
+                      'sale_delivery_wizard.group_delivery_user'):
+            group = self.env.ref(xmlid, raise_if_not_found=False)
+            if not group:
+                continue
+            group = group.sudo()
+            # Odoo 19: user_ids trae solo miembros DIRECTOS; all_user_ids
+            # incluye a quien recibe el grupo por implicación.
+            members = group.all_user_ids if 'all_user_ids' in group._fields else group.user_ids
+            users |= members.filtered(lambda u: u.active and not u.share)
+            if users:
+                break
+        return users
+
+    def _sale_workshop_logistics_activities(self):
+        self.ensure_one()
+        return self.env['mail.activity'].sudo().search([
+            ('res_model', '=', 'workshop.order'),
+            ('res_id', '=', self.id),
+            ('summary', '=like', self.LOGISTICS_ACTIVITY_PREFIX + '%'),
+        ])
+
+    def _sale_workshop_notify_logistics_delivery(self):
+        """Al confirmar una OT de venta con material reservado en almacén:
+        UNA actividad (tipo compartido en el Centro) por usuario de Logística
+        para que imprima la recolección y entregue el material a taller cuando
+        se requiera. Idempotente: si ya hay aviso abierto no duplica."""
+        for order in self:
+            picking = order.sale_workshop_reservation_picking_id
+            if not order.sale_order_id or not picking or picking.state in ('done', 'cancel'):
+                continue
+            if order._sale_workshop_logistics_activities():
+                continue
+            users = order._sale_workshop_logistics_users()
+            if not users:
+                continue
+            sale = order.sale_order_id
+            lines = order._sale_workshop_input_lines_to_reserve()
+            area = sum(order._input_line_area(l) for l in lines)
+            summary = _('%(prefix)s: %(ot)s · %(so)s · %(partner)s') % {
+                'prefix': self.LOGISTICS_ACTIVITY_PREFIX,
+                'ot': order.name or '',
+                'so': sale.name or '',
+                'partner': sale.partner_id.name or '',
+            }
+            note = Markup(_(
+                '<p>%(user)s confirmó la orden de taller <b>%(ot)s</b> (%(process)s) '
+                'del pedido <b>%(so)s</b> · %(partner)s.</p>'
+                '<p>Material reservado: <b>%(count)s placa(s)</b>, %(area).2f m² '
+                '(traslado %(pick)s).</p>'
+                '<p>Imprime la <b>recolección de taller</b> y entrega el material desde '
+                'Entregas › Salidas › columna «A taller» cuando el taller lo requiera.</p>'
+            )) % {
+                'user': self.env.user.name,
+                'ot': order.name or '',
+                'process': order.process_id.display_name or '',
+                'so': sale.name or '',
+                'partner': sale.partner_id.name or '',
+                'count': len(lines),
+                'area': area,
+                'pick': picking.name or '',
+            }
+            for user in users:
+                order.sudo().activity_schedule(
+                    'mail.mail_activity_data_todo',
+                    user_id=user.id,
+                    summary=summary,
+                    note=note,
+                    date_deadline=fields.Date.context_today(order),
+                )
+
+    def _sale_workshop_close_logistics_activities(self, feedback):
+        """Cierra los avisos de entrega a taller (todos los usuarios): el
+        primero con feedback en chatter, el resto en silencio."""
+        for order in self:
+            acts = order._sale_workshop_logistics_activities()
+            if not acts:
+                continue
+            first = acts[:1]
+            rest = acts - first
+            if rest:
+                rest.with_context(mail_activity_quick_update=True).write({
+                    'active': False,
+                    'feedback': feedback,
+                })
+            first.action_feedback(feedback=feedback)
+
+    def _workshop_after_confirm(self):
+        res = super()._workshop_after_confirm()
+        self._sale_workshop_notify_logistics_delivery()
+        return res
+
+    def _workshop_after_unconfirm(self):
+        res = super()._workshop_after_unconfirm()
+        self._sale_workshop_close_logistics_activities(
+            _('La orden regresó a borrador; el aviso se retira.'))
+        return res
+
+    def _sale_workshop_prepare_reservation_for_delivery(self):
+        """Antes de que Logística valide el traslado: si alguna placa se
+        recibió más chica que lo reservado (selección hecha en tránsito con
+        m² del packing list), baja la entrada a lo real y rehace la reserva.
+        Devuelve el traslado vigente (puede ser uno nuevo)."""
+        self.ensure_one()
+        order = self.sudo()
+        picking = order.sale_workshop_reservation_picking_id
+        pending = order._sale_workshop_input_lines_to_reserve()
+        if picking and picking.state not in ('done', 'cancel') and pending \
+                and order._sale_workshop_clamp_inputs_to_stock(pending):
+            order._sale_workshop_refresh_input_reservation()
+            picking = order.sale_workshop_reservation_picking_id
+        return picking
+
+    def _sale_workshop_apply_delivered_reservation(self, picking):
+        """El traslado de reserva ya se validó: el material está físicamente
+        en taller. Las entradas quedan consumidas (sin mover nada más), el
+        traslado pasa a ser el picking de consumo y se cierra el aviso a
+        Logística. La orden NO inicia: eso lo decide el taller."""
+        self.ensure_one()
+        if not picking or picking.state != 'done':
+            return False
+        delivered_lots = set(picking.move_line_ids.mapped('lot_id').ids)
+        pending = self.input_line_ids.filtered(
+            lambda l: l.state != 'cancelled' and not l.is_consumed
+            and l.lot_id and (not delivered_lots or l.lot_id.id in delivered_lots))
+        if picking not in self.consume_picking_ids:
+            self.consume_picking_ids = [(4, picking.id)]
+        if pending:
+            pending.with_context(skip_sale_workshop_reservation=True).write({
+                'state': 'in_progress',
+                'is_consumed': True,
+                'consume_picking_id': picking.id,
+            })
+        self._sale_workshop_sync_selection_states()
+        self._sale_workshop_close_logistics_activities(
+            _('Material entregado a taller con el traslado %s.') % (picking.name or ''))
+        self.message_post(body=_(
+            'Logística entregó el material a taller con el traslado %(pick)s '
+            '(%(count)s placa(s)). La orden se puede iniciar.'
+        ) % {'pick': picking.name or '', 'count': len(pending)})
+        return True
 
     sale_order_id = fields.Many2one(
         'sale.order',
@@ -1156,17 +1325,17 @@ class WorkshopOrder(models.Model):
     # ------------------------------------------------------------------
 
     def action_confirm_workshop(self):
-        """Override: reutiliza el picking de reserva pre-creado para venta.
+        """Override: confirmar = comprometer la operación (30 sep 2026).
 
-        Si la orden viene amarrada a una venta y ya existe un picking de reserva
-        no validado, lo usamos como picking de consumo en vez de crear uno
-        nuevo. El resto del flujo (auto-generar salidas, validar reglas, pasar
-        a `in_workshop`) replica al padre.
+        Ya NO valida el traslado de reserva ni consume: eso pasa cuando
+        Logística entrega el material (hook `_action_done` del traslado →
+        `_sale_workshop_apply_delivered_reservation`) y el reloj arranca con
+        «Iniciar taller». Aquí solo se protege la cadena y, vía
+        `_workshop_after_confirm`, se avisa a Logística.
         """
-        # Candado de cadena: un paso encadenado no puede arrancar hasta que el
+        # Candado de cadena: un paso encadenado no se confirma hasta que el
         # anterior le entregue material — su material ES ese resultado. Basta
-        # una entrega parcial (28 sep 2026): en órdenes grandes el corte
-        # arranca con lo primero que sale de acabado, sin esperar el total.
+        # una entrega parcial (28 sep 2026).
         for order in self:
             if order.state != 'draft':
                 continue
@@ -1174,7 +1343,7 @@ class WorkshopOrder(models.Model):
             if prev and not prev._stone_workshop_chain_has_delivered():
                 state_labels = dict(prev._fields['state'].selection)
                 raise UserError(_(
-                    'No puedes enviar %(order)s a taller: es el paso %(seq)s de una '
+                    'No puedes confirmar %(order)s: es el paso %(seq)s de una '
                     'cadena y el paso anterior %(prev)s (%(state)s) todavía no entrega '
                     'material (ni resultado ni entrega parcial). Sus entradas serán '
                     'exactamente el material que ese paso produzca.'
@@ -1184,74 +1353,37 @@ class WorkshopOrder(models.Model):
                     'prev': prev.name,
                     'state': state_labels.get(prev.state, prev.state),
                 })
+        return super().action_confirm_workshop()
 
-        handled = self.env['workshop.order']
+    def action_start_workshop(self):
+        """Override: iniciar una OT de venta.
+
+        - Traslado de reserva ya validado por Logística pero entradas sin
+          marcar (validación hecha fuera del tablero, datos previos al
+          cambio): se aplica la entrega antes de iniciar.
+        - Traslado pendiente: el candado de material (base) detiene el inicio
+          con el motivo claro.
+        - Después del inicio: estados de selección y ticket automático de
+          etapas 2+ (material ya en piso, producido por el paso anterior).
+        """
+        for order in self:
+            if order.state == 'draft':
+                order.action_confirm_workshop()
+            picking = order.sale_workshop_reservation_picking_id
+            if order.sale_order_id and picking and picking.state == 'done' \
+                    and order._sale_workshop_input_lines_to_reserve():
+                order._sale_workshop_apply_delivered_reservation(picking)
+
+        result = super(
+            WorkshopOrder,
+            self.with_context(**self._sale_workshop_stock_context()),
+        ).action_start_workshop()
 
         for order in self:
-            picking = order.sale_workshop_reservation_picking_id
-            pending_inputs = order._sale_workshop_input_lines_to_reserve()
-
-            if not order.sale_order_id or not picking or picking.state in ('cancel', 'done') or not pending_inputs:
-                continue
-
-            # Reservas hechas antes del ajuste (placas que se recibieron más
-            # chicas): se baja la entrada a lo real y se rehace la reserva
-            # con esas cantidades antes de consumir.
-            if order._sale_workshop_clamp_inputs_to_stock(pending_inputs):
-                order._sale_workshop_refresh_input_reservation()
-                picking = order.sale_workshop_reservation_picking_id
-                pending_inputs = order._sale_workshop_input_lines_to_reserve()
-                if not picking or picking.state in ('cancel', 'done'):
-                    raise UserError(_(
-                        'No se pudo rehacer la reserva de %s tras ajustar las placas a su '
-                        'existencia real. Intenta de nuevo.') % order.name)
-
-            if order.state != 'draft':
-                raise UserError(_('Solo puedes confirmar al taller órdenes en borrador.'))
-
-            order._sale_workshop_cleanup_stale_reservations(input_lines=pending_inputs)
-            for input_line in pending_inputs:
-                order._sale_workshop_assert_input_line_effective_available(input_line)
-
-            if not order._get_active_output_lines():
-                order._auto_generate_outputs()
-            order._validate_business_rules()
-
-            order.with_context(**order._sale_workshop_stock_context())._validate_picking(picking)
-            order.consume_picking_ids = [(4, picking.id)]
-
-            pending_inputs.with_context(skip_sale_workshop_reservation=True).write({
-                'state': 'in_progress',
-                'is_consumed': True,
-                'consume_picking_id': picking.id,
-            })
-
-            order.write({
-                'state': 'in_workshop',
-                'date_start': order.date_start or fields.Datetime.now(),
-            })
-            # Igual que el flujo base: el cronómetro arranca al enviar a
-            # taller. Sin esto, las OTs de venta nunca registraban sesiones de
-            # trabajo (sin avance por tiempo y sin regla de 24 h de pausa).
-            order._start_work_session()
             order._sale_workshop_sync_selection_states()
-
-            order.message_post(
-                body=_('Material reservado enviado a taller con el picking %s.') % picking.name
-            )
-
-            handled |= order
-
-        remaining = self - handled
-
-        result = True
-        if remaining:
-            result = super(WorkshopOrder, remaining).action_confirm_workshop()
-
         # Etapas 2+ de una cadena: ticket de corrida automático — el material
         # ya está en piso en el taller (es la salida del paso anterior).
         self._stone_workshop_auto_ticket_chain_stages()
-
         return result
 
     def _stone_workshop_auto_ticket_chain_stages(self):
@@ -1574,7 +1706,7 @@ class WorkshopOrder(models.Model):
 
             # También en taller: con entregas parciales el siguiente paso ya
             # arrancó con lo primero y cada parcial nuevo le llega en vivo.
-            if not nxt or nxt.state not in ('draft', 'in_workshop'):
+            if not nxt or nxt.state not in ('draft', 'confirmed', 'in_workshop'):
                 continue
             nxt_running = nxt.state == 'in_workshop'
 
