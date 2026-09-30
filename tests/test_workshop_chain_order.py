@@ -6,6 +6,15 @@ from odoo.tests import tagged
 from odoo.addons.stone_workshop.tests.common import WorkshopCase
 
 
+def _make_seller(env, login):
+    # Comisiones exige que el vendedor de la venta sea usuario de ventas.
+    return env['res.users'].create({
+        'name': 'PRUEBA Vendedor ' + login, 'login': login,
+        'group_ids': [(6, 0, [env.ref('base.group_user').id,
+                              env.ref('sales_team.group_sale_salesman').id])],
+    })
+
+
 @tagged('post_install', '-at_install', 'sale_stone_workshop_integration')
 class TestWorkshopChainOrder(WorkshopCase):
 
@@ -15,6 +24,7 @@ class TestWorkshopChainOrder(WorkshopCase):
         cls.p_format = cls.env['workshop.process'].create({'name': 'PRUEBA Formato', 'process_type': 'format'})
         cls.p_rework = cls.env['workshop.process'].create({'name': 'PRUEBA Reproceso', 'process_type': 'rework'})
         cls.partner = cls.env['res.partner'].create({'name': 'PRUEBA Cliente cadena'})
+        cls.seller = _make_seller(cls.env, 'prueba_vendedor_taller_cad')
         Product = cls.env['product.product']
         cls.polished = Product.create({'name': 'PRUEBA intermedio pulido', 'is_storable': True,
                                        'tracking': 'lot', 'uom_id': cls.uom_m2.id})
@@ -22,6 +32,7 @@ class TestWorkshopChainOrder(WorkshopCase):
     def _line(self, main_process):
         so = self.env['sale.order'].create({
             'partner_id': self.partner.id,
+            'user_id': self.seller.id,
             'order_line': [(0, 0, {'product_id': self.cut.id, 'product_uom_qty': 10, 'price_unit': 1})],
         })
         line = so.order_line

@@ -13,6 +13,15 @@ from odoo.tests import tagged
 from odoo.addons.stone_workshop.tests.common import WorkshopCase
 
 
+def _make_seller(env, login):
+    # Comisiones exige que el vendedor de la venta sea usuario de ventas.
+    return env['res.users'].create({
+        'name': 'PRUEBA Vendedor ' + login, 'login': login,
+        'group_ids': [(6, 0, [env.ref('base.group_user').id,
+                              env.ref('sales_team.group_sale_salesman').id])],
+    })
+
+
 @tagged('post_install', '-at_install', 'sale_stone_workshop_integration')
 class TestSaleWorkshopLogistics(WorkshopCase):
 
@@ -20,6 +29,7 @@ class TestSaleWorkshopLogistics(WorkshopCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.partner = cls.env['res.partner'].create({'name': 'PRUEBA Cliente taller'})
+        cls.seller = _make_seller(cls.env, 'prueba_vendedor_taller_log')
         group = cls.env.ref('sale_delivery_wizard.group_delivery_user')
         cls.logistics_user = cls.env['res.users'].create({
             'name': 'PRUEBA Logística', 'login': 'prueba_logistica_taller',
@@ -33,6 +43,7 @@ class TestSaleWorkshopLogistics(WorkshopCase):
     def _sale_order_with_workshop(self, lots_qty):
         so = self.env['sale.order'].create({
             'partner_id': self.partner.id,
+            'user_id': self.seller.id,
             'order_line': [(0, 0, {
                 'product_id': self.finished.id,
                 'product_uom_qty': sum(q for _l, q in lots_qty),
